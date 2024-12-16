@@ -1,0 +1,22 @@
+# Ignore environment variables
+.env
+
+# Ignore specific directories
+/DATABASE/
+/SQLDB/
+/data/
+
+# Ignore all CSV and DB files anywhere in the repository
+*.csv
+*.db
+
+# Ignore specific files
+combined_data.csv
+Combined_SQLite.csv
+combined.log
+error.log
+globus-repo_latest_all.deb
+idmap.json
+mrmege_phewas_database.db
+mrmega_phewas_database.db
+phewas_database.db
