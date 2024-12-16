@@ -124,66 +124,31 @@ Access the API at `http://localhost:5001/api`.
 1. **Get Related Phenotypes**
    - **GET** `/api/getRelatedPhenotypes`
    - Query: `phenoId` (required)
-   - Response:
-     ```json
-     [
-       { "id": "Phe123", "description": "Phenotype description" },
-       { "id": "Phe456", "description": "Another phenotype description" }
-     ]
-     ```
 
 2. **Get Phenotype Mapping**
    - **GET** `/api/getPhenotypeMapping`
-   - Response:
-     ```json
-     {
-       "Phe123": { "category": "Category1", "description": "Description1" },
-       "Phe456": { "category": "Category2", "description": "Description2" }
-     }
-     ```
 
 ### GWAS Endpoints
 
 1. **Get GWAS Metadata**
    - **GET** `/api/getGWASMetadata`
-   - Response:
-     ```json
-     [
-       { "phenotype_id": "Phe123", "cohort": "EUR", "num_snps": 1000, "num_samples": 5000 },
-       ...
-     ]
-     ```
+
 
 2. **Query GWAS Data**
    - **GET** `/api/queryGWASData`
    - Query: `phenoId`, `cohortId`, `study` (all required)
-   - Response:
-     ```json
-     { "1": [ /* Data for chromosome 1 */ ], "2": [ /* Chromosome 2 */ ] }
-     ```
+  
 
 ### GPT Endpoints
 
 1. **Ask GPT**
    - **GET** `/api/askgpt`
    - Query: `question` (required)
-   - Response:
-     ```json
-     {
-       "question": "What are the top GWAS findings?",
-       "sqlQuery": "SELECT * FROM ...",
-       "results": [ /* Results */ ],
-       "explanation": "Explanation text",
-       "gwasLinks": [ { "phenotype": "Phe123", "cohort": "EUR", "gwasLink": "..." } ]
-     }
-     ```
+ 
 
 2. **Initialize Database**
    - **POST** `/api/init-database`
-   - Response:
-     ```json
-     { "message": "Database initialized successfully" }
-     ```
+ 
 
 ## Repository Structure
 
