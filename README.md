@@ -88,33 +88,6 @@ MRMEGA_DB=/path/to/mrmega.db
 
 **Note**: Replace `/path/to/...` with actual paths.
 
-### 2. Git Ignore Configuration
-
-Ensure sensitive and large files are not tracked. Add the following to `.gitignore`:
-
-```gitignore
-# Environment Variables
-.env
-
-# Directories
-/DATABASE/
-/SQLDB/
-/data/
-
-# File Types
-*.csv
-*.db
-
-# Specific Files
-combined_data.csv
-error.log
-```
-
-Remove previously tracked sensitive files:
-
-```bash
-git rm --cached .env *.csv *.db
-```
 
 ## Database Initialization
 
@@ -243,5 +216,5 @@ This project is licensed under the [MIT License](LICENSE).
 ## Contact
 
 - **GitHub**: [Verma-Lab](https://github.com/Verma-Lab)
-- **Email**: hritvik@example.com
+- **Email**: guptahr@upenn.pennmedicine.edu
 
