@@ -39,6 +39,21 @@ export async function queryGWASData(req, res) {
     }
     try {
         const data = await queryGWASDataService(phenoId, cohortId, study);
+
+        // Check if the data is an array
+        if (Array.isArray(data)) {
+            console.log("Head of the data (first 5 rows):", data.slice(0, 5));  // Print first 5 rows
+        } else if (typeof data === 'object' && data !== null) {
+            // If it's an object, get the first 5 keys and print
+            const headObject = Object.keys(data).slice(0, 5).reduce((obj, key) => {
+                obj[key] = data[key];
+                return obj;
+            }, {});
+            console.log("Head of the data (first 5 keys):");
+        } else {
+            console.log("Data is not an array or object:");
+        }
+        
         res.json(data);
     } catch (error) {
         _error(`Error in queryGWASData controller: ${error.message}`);
