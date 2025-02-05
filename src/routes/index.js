@@ -2,11 +2,11 @@
 import { Router } from 'express';
 const router = Router();
 import { getRelatedPhenotypes } from '../controllers/phenotypeController.js';
-import { getGWASMetadata, queryGWASData, getTopResults, findFiles } from '../controllers/gwasController.js'; // Import findFiles
+import { getGWASMetadata, queryGWASData, getTopResults, findFiles, getGWASStatsRoute } from '../controllers/gwasController.js'; // Import findFiles
 import { getPhewasData } from '../controllers/phewasController.js';
 import { getLeadVariants } from '../controllers/gwasController.js';
-import { askGPT, initDatabase } from '../controllers/gptController.js';
-import { loadPhenotypeMapping } from '../services/phenotypeService.js';
+import { askGPT } from '../controllers/gptController.js';
+import { loadPhenotypeMapping, getPhenotypeStats } from '../services/phenotypeService.js';
 import { GWAS_FILES_PATH } from '../config/constants.js';
 import { join } from 'path';
 import fs from 'fs/promises';
@@ -22,13 +22,23 @@ router.get('/getGWASMetadata', getGWASMetadata);
 router.get('/queryGWASData', queryGWASData);
 router.get('/getTopResults', getTopResults);
 router.get('/getLeadVariants', getLeadVariants);
-
-
+router.get('/getGWASStatsRoute', getGWASStatsRoute);
+// In your Express routes file
+router.get('/getPhenotypeStats/:phenoId', async (req, res) => {
+    try {
+      const { phenoId } = req.params;
+      const stats = await getPhenotypeStats(phenoId);
+      res.json(stats);
+    } catch (err) {
+      console.error('Error in getPhenotypeStats endpoint:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
 // PheWAS routes
 router.get('/phewas', getPhewasData);
 
 router.get('/askgpt', askGPT);
-router.post('/init-database', initDatabase);
+// router.post('/init-database', initDatabase);
 
 router.get('/getPhenotypeMapping', async (req, res) => {
     try {

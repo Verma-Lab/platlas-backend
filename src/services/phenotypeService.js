@@ -4,11 +4,96 @@ import { parse } from 'csv-parse/sync';
 import { MANIFEST_PATH, GWAS_FILES_PATH } from '../config/constants.js';
 import { error } from '../utils/logger.js';
 
-// Make loadPhenotypeMapping a named export instead of private function
+
+
+function parseNumberWithCommas(str) {
+    if (!str || str === '-') return 0;
+    return parseInt(str.replace(/,/g, '')) || 0;
+}
+// New function to get phenotype stats
+export async function getPhenotypeStats(phenoId) {
+    try {
+        if (!phenoId || typeof phenoId !== 'string') {
+            throw new Error(`Invalid phenotype ID: ${phenoId}`);
+        }
+
+        const fileContent = await fs.readFile(MANIFEST_PATH, 'utf-8');
+        
+        // Parse CSV with header
+        const records = parse(fileContent, {
+            columns: true,
+            skip_empty_lines: true,
+            trim: true
+        });
+
+        // Filter records for the specific phenotype
+        const phenoRecords = records.filter(record => record.Trait.trim() === phenoId.trim());
+        
+        console.log(`Found ${phenoRecords.length} records for phenotype ${phenoId}`);
+
+        if (phenoRecords.length === 0) {
+            throw new Error(`No data found for phenotype: ${phenoId}`);
+        }
+
+        // Get populations for this phenotype
+        const populations = phenoRecords[0].Population.split(',').map(pop => pop.trim());
+
+        // Initialize stats object
+        const stats = {
+            snps_by_cohort: {},
+            samples_by_cohort: {}
+        };
+
+        // For each population, create entries in stats
+        populations.forEach(pop => {
+            stats.snps_by_cohort[pop] = parseNumberWithCommas(phenoRecords[0]['N SNP']);
+            stats.samples_by_cohort[pop] = parseNumberWithCommas(phenoRecords[0]['N All']);
+            
+            // If it's a binary trait, also add case numbers
+            if (phenoRecords[0]['Trait type'] === 'Binary') {
+                const nCases = parseNumberWithCommas(phenoRecords[0]['N Cases']);
+                stats.samples_by_cohort[pop] = nCases;
+            }
+        });
+
+        return {
+            phenotype_id: phenoId,
+            trait_description: phenoRecords[0].Description,
+            category: phenoRecords[0].Category,
+            trait_type: phenoRecords[0]['Trait type'],
+            stats: stats
+        };
+
+    } catch (err) {
+        console.error(`Error getting phenotype stats for ${phenoId}:`, err);
+        throw err;
+    }
+}
+
+// Helper function to parse a CSV line properly handling quoted fields
+function parseCSVLine(line) {
+    const entries = [];
+    let entry = '';
+    let withinQuotes = false;
+    
+    for (let char of line) {
+        if (char === '"') {
+            withinQuotes = !withinQuotes;
+        } else if (char === ',' && !withinQuotes) {
+            entries.push(entry.trim());
+            entry = '';
+        } else {
+            entry += char;
+        }
+    }
+    entries.push(entry.trim());
+    return entries;
+}
+
 export async function loadPhenotypeMapping() {
     try {
         const fileContent = await fs.readFile(MANIFEST_PATH, 'utf-8');
-        const lines = fileContent.split('\n');
+        const lines = fileContent.trim().split('\n');
         
         // Skip the header line
         const dataLines = lines.slice(1);
@@ -16,21 +101,41 @@ export async function loadPhenotypeMapping() {
         const mapping = {};
         for (const line of dataLines) {
             if (line.trim()) {
-                const [phecode, category, description] = line.split('\t').map(field => field.trim());
-                if (phecode && category && description) {
-                    mapping[phecode] = {
-                        category: category,
-                        description: description
+                const fields = parseCSVLine(line);
+                
+                const phenotype = fields[0];
+                const traitDescription = fields[1];
+                const category = fields[2];
+                const populations = fields[3].replace(/"/g, '').split(',').map(pop => pop.trim());
+                const nAll = parseNumberWithCommas(fields[6]);
+                const nCases = parseNumberWithCommas(fields[7]);
+                const nSnp = parseNumberWithCommas(fields[11]);
+
+                if (phenotype) {
+                    mapping[phenotype] = {
+                        traitDescription,
+                        category,
+                        populations,
+                        nAll,
+                        nCases,
+                        nSnp
                     };
                 }
             }
         }
+
+        console.log('Loaded mapping with keys:', Object.keys(mapping).length);
         return mapping;
     } catch (err) {
-        error(`Error loading phenotype mapping: ${err.message}`);
+        console.error('Error loading phenotype mapping:', {
+            error: err.message,
+            stack: err.stack,
+            path: MANIFEST_PATH
+        });
         throw err;
     }
 }
+
 
 export async function getRelatedPhenotypes(currentPheno) {
     try {

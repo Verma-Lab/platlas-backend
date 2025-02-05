@@ -123,7 +123,7 @@ export async function queryGWASData(phenoId, cohortId, study) {
     try {
         // Validate study parameter
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
-            throw new Error('Invalid study type. Must be "gwama" or "mrmega".');
+            return { error: 'Invalid study type. Must be "gwama" or "mrmega".', status: 500 };
         }
 
         // Construct filename with study and pval_up_to_1e-05
@@ -137,7 +137,7 @@ export async function queryGWASData(phenoId, cohortId, study) {
             await fs.access(filePath);
             console.log('File found:', gz_file);
         } catch {
-            throw new Error(`GWAS data file not found: ${gz_file}`);
+            return { error: `GWAS data file not found: ${gz_file}`, status: 500 };
         }
 
         // Verify tabix index
@@ -146,7 +146,7 @@ export async function queryGWASData(phenoId, cohortId, study) {
             await fs.access(indexPath);
             console.log('Index file found');
         } catch {
-            throw new Error(`Tabix index not found for file: ${gz_file}`);
+            return { error: `Tabix index not found for file: ${gz_file}`, status: 500 };
         }
 
         const results = {};
@@ -169,16 +169,21 @@ export async function queryGWASData(phenoId, cohortId, study) {
         }
 
         await Promise.all(promises);
+        
+        // Check if we got any data
+        const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
+        if (totalRows === 0) {
+            return { error: 'No data found in the file', status: 500 };
+        }
+
         console.log(`Processed data for file: ${gz_file}`);
         console.log(`Found data for chromosomes: ${Object.keys(results).join(', ')}`);
-        const totalRows = Object.values(results).reduce((accumulator, chromData) => {
-            return accumulator + chromData.length;
-        }, 0);
         console.log(`Total Data Rows: ${totalRows}`);
-        return results;
+        
+        return { data: results, status: 200 };
     } catch (error) {
         console.error(`Error querying GWAS data: ${error.message}`);
-        throw error;
+        return { error: error.message, status: 500 };
     }
 }
 
@@ -259,56 +264,60 @@ function checkPvalThreshold(pval, threshold) {
     }
 }
 
-export async function getGWASMetadata() {
+
+export async function getGWASStats() {
     try {
-        const phenoMapping = await loadPhenotypeMapping();
-        const files = await fs.readdir(GWAS_FILES_PATH);
-        const pattern = /Phe_([^.]+)\.([^.]+)\.gwama_pval_up_to_0\.1/;
-        const metadata = [];
+        const mapping = await loadPhenotypeMapping();
+        
+        // Calculate stats
+        const stats = {
+            uniquePhenotypes: Object.keys(mapping).length,
+            totalSnps: Math.max(...Object.values(mapping).map(p => p.nSnp || 0)),
+            totalPopulation: Math.max(...Object.values(mapping).map(p => p.nCases || 0))
+        };
+        
+        // Debug log the first few entries and final stats
+        console.log('Sample entries:', 
+            Object.entries(mapping)
+                .slice(0, 3)
+                .map(([k, v]) => `${k}: SNPs=${v.nSnp}, Cases=${v.nCases}`)
+        );
+        console.log('Final stats:', stats);
+        
+        return stats;
+    } catch (error) {
+        console.error('Error getting GWAS stats:', error);
+        throw error;
+    }
+}
 
-        for (const filename of files) {
-            if (filename.endsWith('0.0001.gz')) {
-                const match = filename.match(pattern);
-                if (match) {
-                    const [_, pheno_id, cohort_id] = match;
-                    const filePath = join(GWAS_FILES_PATH, filename);
-                    const fileContent = await fs.readFile(filePath);
-                    const unzipped = gunzipSync(fileContent).toString();
-                    const lines = unzipped.split('\n');
-                    
-                    // Get header and find sample index
-                    const header = lines[0].split('\t');
-                    const sampleIdx = header.indexOf('num_samples');
-                    
-                    // Track unique SNPs and sample count
-                    const uniqueSnps = new Set();
-                    let numSamples = null;
-
-                    // Process each line after header
-                    for (const line of lines.slice(1)) {
-                        if (line.trim()) {
-                            const fields = line.split('\t');
-                            uniqueSnps.add(fields[0]);  // SNP_ID
-                            if (numSamples === null && fields[sampleIdx]) {
-                                numSamples = parseInt(fields[sampleIdx]);
-                            }
-                        }
-                    }
-
-                    metadata.push({
-                        phenotype_id: pheno_id,
-                        phenotype_name: phenoMapping[pheno_id] || '',
-                        cohort: cohort_id,
-                        num_snps: uniqueSnps.size,
-                        num_samples: numSamples
-                    });
-                }
+export async function getSearchableGWASMetadata() {
+    try {
+        const mapping = await loadPhenotypeMapping();
+        const searchableData = [];
+        
+        for (const [phenotype, data] of Object.entries(mapping)) {
+            if (!data.populations) {
+                console.warn(`No populations found for phenotype ${phenotype}`);
+                continue;
+            }
+            
+            for (const population of data.populations) {
+                searchableData.push({
+                    phenotype,
+                    traitDescription: data.traitDescription,
+                    category: data.category,
+                    population: population.trim(),
+                    nAll: data.nAll,
+                    nCases: data.nCases,
+                    nSnp: data.nSnp
+                });
             }
         }
         
-        return metadata;
+        return searchableData;
     } catch (error) {
-        error(`Error getting GWAS metadata: ${error.message}`);
+        console.error('Error getting searchable GWAS metadata:', error);
         throw error;
     }
 }
@@ -505,55 +514,127 @@ export async function getLeadVariants() {
 
 export async function getTopResults(cohortId, phenoId, study) {
     try {
-
         const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
         const filePath = join(GWAS_FILES_PATH, gz_file);
         
+        // Check if file exists first
+        try {
+            await fs.access(filePath);
+        } catch (error) {
+            return { error: `Top results file not found: ${gz_file}`, status: 500 };
+        }
+
         const results = [];
-        const fileStream = createReadStream(filePath);
-        const gunzip = createGunzip();
-        const rl = createInterface({
-            input: fileStream.pipe(gunzip),
-            crlfDelay: Infinity
-        });
+        
+        // Wrap file reading in try-catch
+        try {
+            const fileStream = createReadStream(filePath);
+            const gunzip = createGunzip();
+            
+            const rl = createInterface({
+                input: fileStream.pipe(gunzip),
+                crlfDelay: Infinity
+            });
 
-        let isFirstLine = true;
-        let headers = [];
+            let isFirstLine = true;
+            let headers = [];
 
-        for await (const line of rl) {
-            if (isFirstLine) {
-                headers = line.trim().split(/\s+/);
-                isFirstLine = false;
-                continue;
-            }
+            for await (const line of rl) {
+                if (isFirstLine) {
+                    headers = line.trim().split(/\s+/);
+                    isFirstLine = false;
+                    continue;
+                }
 
-            if (line.trim()) {
-                const fields = line.trim().split(/\s+/);
-                try {
-                    const row = {};
-                    headers.forEach((header, index) => {
-                        const value = fields[index];
-                        if (value === 'NA') {
-                            row[header] = null;
-                        } else if (['POS', 'N_STUDY', 'N_CASE'].includes(header)) {
-                            row[header] = parseInt(value);
-                        } else if (['BETA', 'SE', 'P', 'LOG10P', 'AAF', 'AAF_CASE'].includes(header)) {
-                            row[header] = parseFloat(value);
-                        } else {
-                            row[header] = value;
-                        }
-                    });
-                    results.push(row);
-                } catch (e) {
-                    console.warn(`Error processing row: ${e.message}`);
+                if (line.trim()) {
+                    const fields = line.trim().split(/\s+/);
+                    try {
+                        const row = {};
+                        headers.forEach((header, index) => {
+                            const value = fields[index];
+                            if (value === 'NA') {
+                                row[header] = null;
+                            } else if (['POS', 'N_STUDY', 'N_CASE'].includes(header)) {
+                                row[header] = parseInt(value);
+                            } else if (['BETA', 'SE', 'P', 'LOG10P', 'AAF', 'AAF_CASE'].includes(header)) {
+                                row[header] = parseFloat(value);
+                            } else {
+                                row[header] = value;
+                            }
+                        });
+                        results.push(row);
+                    } catch (e) {
+                        console.warn(`Error processing row: ${e.message}`);
+                    }
                 }
             }
+
+            // Handle case where we successfully read the file but found no data
+            if (results.length === 0) {
+                return { error: 'No data found in file', status: 500 };
+            }
+
+            return { data: results, status: 200 };
+
+        } catch (error) {
+            return { error: `Error reading file: ${error.message}`, status: 500 };
         }
-        // console.log(results)
-        return results;
     } catch (error) {
         console.error(`Error getting top results: ${error.message}`);
-        throw error;
+        return { error: error.message, status: 500 };
     }
 }
+// export async function getTopResults(cohortId, phenoId, study) {
+//     try {
+
+//         const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
+//         const filePath = join(GWAS_FILES_PATH, gz_file);
+        
+//         const results = [];
+//         const fileStream = createReadStream(filePath);
+//         const gunzip = createGunzip();
+//         const rl = createInterface({
+//             input: fileStream.pipe(gunzip),
+//             crlfDelay: Infinity
+//         });
+
+//         let isFirstLine = true;
+//         let headers = [];
+
+//         for await (const line of rl) {
+//             if (isFirstLine) {
+//                 headers = line.trim().split(/\s+/);
+//                 isFirstLine = false;
+//                 continue;
+//             }
+
+//             if (line.trim()) {
+//                 const fields = line.trim().split(/\s+/);
+//                 try {
+//                     const row = {};
+//                     headers.forEach((header, index) => {
+//                         const value = fields[index];
+//                         if (value === 'NA') {
+//                             row[header] = null;
+//                         } else if (['POS', 'N_STUDY', 'N_CASE'].includes(header)) {
+//                             row[header] = parseInt(value);
+//                         } else if (['BETA', 'SE', 'P', 'LOG10P', 'AAF', 'AAF_CASE'].includes(header)) {
+//                             row[header] = parseFloat(value);
+//                         } else {
+//                             row[header] = value;
+//                         }
+//                     });
+//                     results.push(row);
+//                 } catch (e) {
+//                     console.warn(`Error processing row: ${e.message}`);
+//                 }
+//             }
+//         }
+//         // console.log(results)
+//         return results;
+//     } catch (error) {
+//         console.error(`Error getting top results: ${error.message}`);
+//         throw error;
+//     }
+// }
 

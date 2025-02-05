@@ -1,23 +1,34 @@
 // File: src/controllers/gwasController.js
 import { 
-    getGWASMetadata as getGWASMetadataService, 
     queryGWASData as queryGWASDataService,
     getTopResults as getTopResultsService ,
-    getLeadVariants as getLeadVariantsService
+    getLeadVariants as getLeadVariantsService, 
+    getSearchableGWASMetadata, 
+    getGWASStats
  } from '../services/gwasService.js';
  import { streamTabixData } from '../services/tabixService.js';
  import { error as _error } from '../utils/logger.js';
  
  export async function getGWASMetadata(req, res) {
     try {
-        const metadata = await getGWASMetadataService();
+        const metadata = await getSearchableGWASMetadata();
         res.json(metadata);
     } catch (error) {
         _error(`Error in getGWASMetadata controller: ${error.message}`);
         res.status(500).json({ error: error.message });
     }
  }
- 
+ export async function getGWASStatsRoute(req, res) {
+    try {
+        const metadata = await getGWASStats();
+        console.log('STATS')
+        console.log(metadata)
+        res.json(metadata);
+    } catch (error) {
+        _error(`Error in getGWASMetadata controller: ${error.message}`);
+        res.status(500).json({ error: error.message });
+    }
+ } 
  export async function findFiles(req, res) {
     const { phenoId, cohort, study } = req.query;
     if (!phenoId || !cohort || !study) {
@@ -35,28 +46,22 @@ import {
 export async function queryGWASData(req, res) {
     const { phenoId, cohortId, study } = req.query;
     if (!phenoId || !cohortId || !study) {
-        return res.status(400).json({ error: 'phenoId, cohortId, and study are required parameters.' });
+        return res.status(400).json({ 
+            error: 'phenoId, cohortId, and study are required parameters.' 
+        });
     }
-    try {
-        const data = await queryGWASDataService(phenoId, cohortId, study);
 
-        // Check if the data is an array
-        if (Array.isArray(data)) {
-            console.log("Head of the data (first 5 rows):", data.slice(0, 5));  // Print first 5 rows
-        } else if (typeof data === 'object' && data !== null) {
-            // If it's an object, get the first 5 keys and print
-            const headObject = Object.keys(data).slice(0, 5).reduce((obj, key) => {
-                obj[key] = data[key];
-                return obj;
-            }, {});
-            console.log("Head of the data (first 5 keys):");
-        } else {
-            console.log("Data is not an array or object:");
-        }
+    try {
+        const result = await queryGWASDataService(phenoId, cohortId, study);
         
-        res.json(data);
+        if (result.error) {
+            console.error('GWAS Data Error:', result.error);
+            return res.status(result.status).json({ error: result.error });
+        }
+
+        res.json(result.data);
     } catch (error) {
-        _error(`Error in queryGWASData controller: ${error.message}`);
+        console.error(`Error in queryGWASData controller: ${error.message}`);
         res.status(500).json({ error: error.message });
     }
 }
@@ -88,16 +93,38 @@ export async function queryGWASData(req, res) {
 export async function getTopResults(req, res) {
     const { phenoId, cohortId, study } = req.query;
     if (!phenoId || !cohortId || !study) {
-        return res.status(400).json({ error: 'phenoId, cohortId, and study are required parameters.' });
+        return res.status(400).json({ 
+            error: 'phenoId, cohortId, and study are required parameters.' 
+        });
     }
+
     try {
-        const data = await getTopResultsService(cohortId, phenoId, study);
-        res.json(data);
+        const result = await getTopResultsService(cohortId, phenoId, study);
+        
+        if (result.error) {
+            console.error('Top Results Error:', result.error);
+            return res.status(result.status).json({ error: result.error });
+        }
+
+        res.json(result.data);
     } catch (error) {
-        _error(`Error in getTopResults controller: ${error.message}`);
+        console.error(`Error in getTopResults controller: ${error.message}`);
         res.status(500).json({ error: error.message });
     }
 }
+// export async function getTopResults(req, res) {
+//     const { phenoId, cohortId, study } = req.query;
+//     if (!phenoId || !cohortId || !study) {
+//         return res.status(400).json({ error: 'phenoId, cohortId, and study are required parameters.' });
+//     }
+//     try {
+//         const data = await getTopResultsService(cohortId, phenoId, study);
+//         res.json(data);
+//     } catch (error) {
+//         _error(`Error in getTopResults controller: ${error.message}`);
+//         res.status(500).json({ error: error.message });
+//     }
+// }
 
  export async function getLeadVariants(req, res) {
     try {
