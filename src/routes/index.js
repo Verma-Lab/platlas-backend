@@ -11,6 +11,8 @@ import { GWAS_FILES_PATH } from '../config/constants.js';
 import { join } from 'path';
 import fs from 'fs/promises';
 import debug from 'debug';
+import logger from '../utils/logger.js';
+import { searchSNPs } from '../controllers/snpMappingController.js';
 
 const error = debug('app:error');
 const info = debug('app:info');
@@ -23,6 +25,72 @@ router.get('/queryGWASData', queryGWASData);
 router.get('/getTopResults', getTopResults);
 router.get('/getLeadVariants', getLeadVariants);
 router.get('/getGWASStatsRoute', getGWASStatsRoute);
+router.get('/searchSNPs', searchSNPs);
+router.get('/getQQPlot', async (req, res) => {
+    const { phenoId, cohortId, study } = req.query;
+    
+    try {
+        logger.info(`Attempting to fetch QQ plot for phenoId: ${phenoId}, cohortId: ${cohortId}, study: ${study}`);
+        
+        if (!phenoId || !cohortId || !study) {
+            return res.status(400).json({
+                error: 'Missing required parameters',
+                details: 'phenoId, cohortId, and study are required'
+            });
+        }
+
+        // Construct the file name with the new format
+        const fileName = `${phenoId}.${cohortId}.${study}.sumstats.txt.png`;
+        const filePath = path.join('/nfs/platlas_stor/tabix', fileName);
+        
+        logger.info(`Looking for QQ plot at path: ${filePath}`);
+
+        try {
+            // Check if file exists
+            await fs.access(filePath);
+        } catch (error) {
+            logger.error(`File not found at path: ${filePath}`);
+            
+            // Try alternative path for different name format if needed
+            const altFileName = `${phenoId}.${cohortId}.${study}_pval_up_to_0.1.png`;
+            const altFilePath = path.join('/nfs/platlas_stor/tabix', altFileName);
+            
+            try {
+                await fs.access(altFilePath);
+                // If alternative file exists, use it
+                const fileData = await fs.readFile(altFilePath);
+                res.setHeader('Content-Type', 'image/png');
+                res.setHeader('Cache-Control', 'public, max-age=3600');
+                return res.send(fileData);
+            } catch (altError) {
+                // If neither file exists, return 404
+                return res.status(404).json({ 
+                    error: 'QQ plot not found',
+                    details: `Files not found: ${fileName} or ${altFileName}`
+                });
+            }
+        }
+        
+        // Read the file if it exists
+        const fileData = await fs.readFile(filePath);
+        
+        // Set appropriate headers
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+        
+        logger.info(`Successfully sending QQ plot for ${fileName}`);
+        res.send(fileData);
+        
+    } catch (error) {
+        logger.error('Error in getQQPlot:', error);
+        res.status(500).json({ 
+            error: 'Failed to fetch QQ plot',
+            details: error.message 
+        });
+    }
+});
+
+      
 // In your Express routes file
 router.get('/getPhenotypeStats/:phenoId', async (req, res) => {
     try {

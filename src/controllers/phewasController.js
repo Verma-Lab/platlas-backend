@@ -14,8 +14,17 @@ export async function getPhewasData(req, res) {
         }
 
         const data = await getPhewasDataService(snp, chromosome, position, study);
+        
+        // Check if data exists and has plot_data
+        if (!data || !data.plot_data) {
+            return res.status(404).json({
+                error: 'No PheWAS data found for the given parameters'
+            });
+        }
+
         res.json(data);
     } catch (error) {
+        _error('Error in getPhewasData:', error);
         res.status(500).json({
             error: 'Error fetching PheWAS data',
             details: error.message

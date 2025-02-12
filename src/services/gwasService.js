@@ -5,7 +5,7 @@ import { gunzipSync } from 'zlib';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 const execAsync = promisify(exec);
-import { GWAS_FILES_PATH, TOP_HITS_PATH, BASE_PREFIX, LEAD_MRMEGA_PATH } from '../config/constants.js';
+import { GWAS_FILES_PATH, TOP_HITS_PATH, BASE_PREFIX, LEAD_MRMEGA_PATH, COMBINED_SNP_INFO } from '../config/constants.js';
 import { error as _error, warn } from '../utils/logger.js';
 import { loadPhenotypeMapping } from './phenotypeService.js';  // Change to named import
 import { parse } from 'csv-parse/sync';
@@ -187,70 +187,6 @@ export async function queryGWASData(phenoId, cohortId, study) {
     }
 }
 
-// export async function queryGWASData(phenoId, cohortId) {
-//     try {
-//       // Remove any "Phe_" prefix if it exists in the phenoId parameter
-//     //   const pheno = phenoId.replace('Phe_', '');
-      
-//       // Construct filename matching your actual file pattern
-//       const gz_file = `${phenoId}.${cohortId}.gwama_pval_up_to_1e-05.gz`;
-//       const filePath = join(GWAS_FILES_PATH, gz_file);
-  
-//       console.log(`Attempting to access file: ${filePath}`);
-  
-//       // Verify file existence
-//       try {
-//         await fs.access(filePath);
-//         console.log('File found:', gz_file);
-//       } catch {
-//         throw new Error(`GWAS data file not found: ${gz_file}`);
-//       }
-  
-//       // Verify tabix index
-//       const indexPath = `${filePath}.tbi`;
-//       try {
-//         await fs.access(indexPath);
-//         console.log('Index file found');
-//       } catch {
-//         throw new Error(`Tabix index not found for file: ${gz_file}`);
-//       }
-// //   Phe_414.ALL.mrmega_pval_up_to_1e-05.gz
-// //   Phe_414.ALL.gwama_pval_up_to_1e-05.gz
-//       const results = {};
-//       const promises = [];
-  
-//       // Process all chromosomes in parallel
-//       for (let chrom = 1; chrom <= 22; chrom++) {
-//         promises.push(
-//           fetchTabixData(chrom, filePath)
-//             .then(chromData => {
-//               if (chromData.length > 0) {
-//                 results[chrom] = chromData;
-//               }
-//             })
-//             .catch(error => {
-//               console.error(`Error processing chromosome ${chrom}: ${error.message}`);
-//               results[chrom] = [];
-//             })
-//         );
-//       }
-  
-//       await Promise.all(promises);
-//       console.log(`Processed data for file: ${gz_file}`);
-//       console.log(`Found data for chromosomes: ${Object.keys(results).join(', ')}`);
-//     //   console.log(results)
-//       const totalRows = Object.values(results).reduce((accumulator, chromData) => {
-//         return accumulator + chromData.length;
-//       }, 0);
-//       console.log(`Total Data Rows: ${totalRows}`);
-//       return results;
-//     } catch (error) {
-//       console.error(`Error querying GWAS data: ${error.message}`);
-//       throw error;
-//     }
-//   }
-
-
 function checkPvalThreshold(pval, threshold) {
     switch (threshold) {
         case '1e-06_to_0.0001':
@@ -265,24 +201,64 @@ function checkPvalThreshold(pval, threshold) {
 }
 
 
+// export async function getGWASStats() {
+//     try {
+//         const mapping = await loadPhenotypeMapping();
+        
+//         // Calculate stats
+//         const stats = {
+//             uniquePhenotypes: Object.keys(mapping).length,
+//             totalSnps: Math.max(...Object.values(mapping).map(p => p.nSnp || 0)),
+//             totalPopulation: Math.max(...Object.values(mapping).map(p => p.nCases || 0))
+//         };
+        
+//         // Debug log the first few entries and final stats
+//         console.log('Sample entries:', 
+//             Object.entries(mapping)
+//                 .slice(0, 3)
+//                 .map(([k, v]) => `${k}: SNPs=${v.nSnp}, Cases=${v.nCases}`)
+//         );
+//         console.log('Final stats:', stats);
+        
+//         return stats;
+//     } catch (error) {
+//         console.error('Error getting GWAS stats:', error);
+//         throw error;
+//     }
+// }
 export async function getGWASStats() {
     try {
+        // const COMBINED_SNP_INFO = '/Users/hritvik/Downloads/combined_SNPs.csv';
         const mapping = await loadPhenotypeMapping();
-        
-        // Calculate stats
+
+        // Read and parse the combined SNP info file
+        const snpFileContent = await fs.readFile(COMBINED_SNP_INFO, 'utf-8');
+        const snpRecords = parse(snpFileContent, {
+            columns: ['phenotype', 'cohort', 'analysis_type', 'snp_number'],
+            skip_empty_lines: true,
+            trim: true
+        });
+
+        // Calculate stats from combined SNP info
         const stats = {
-            uniquePhenotypes: Object.keys(mapping).length,
-            totalSnps: Math.max(...Object.values(mapping).map(p => p.nSnp || 0)),
-            totalPopulation: Math.max(...Object.values(mapping).map(p => p.nCases || 0))
+            uniquePhenotypes: new Set(snpRecords.map(record => record.phenotype)).size,
+            snpStats: {
+                gwama: snpRecords
+                    .filter(record => record.analysis_type === 'gwama')
+                    .reduce((sum, record) => sum + parseInt(record.snp_number), 0),
+                mrmega: snpRecords
+                    .filter(record => record.analysis_type === 'mrmega')
+                    .reduce((sum, record) => sum + parseInt(record.snp_number), 0)
+            },
+            totalPopulation: Math.max(...Object.values(mapping).map(p => p.nAll || 0))
         };
         
-        // Debug log the first few entries and final stats
-        console.log('Sample entries:', 
-            Object.entries(mapping)
-                .slice(0, 3)
-                .map(([k, v]) => `${k}: SNPs=${v.nSnp}, Cases=${v.nCases}`)
-        );
-        console.log('Final stats:', stats);
+        console.log('GWAS Stats:', {
+            'Unique Phenotypes': stats.uniquePhenotypes,
+            'GWAMA Total SNPs': stats.snpStats.gwama,
+            'MR-MEGA Total SNPs': stats.snpStats.mrmega,
+            'Total Population': stats.totalPopulation
+        });
         
         return stats;
     } catch (error) {

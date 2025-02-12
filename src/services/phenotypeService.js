@@ -1,42 +1,114 @@
 // File: src/services/phenotypeService.js
 import { promises as fs } from 'fs';
 import { parse } from 'csv-parse/sync';
-import { MANIFEST_PATH, GWAS_FILES_PATH } from '../config/constants.js';
+import { MANIFEST_PATH, GWAS_FILES_PATH, COMBINED_SNP_INFO } from '../config/constants.js';
 import { error } from '../utils/logger.js';
 
 
 
+// function parseNumberWithCommas(str) {
+//     if (!str || str === '-') return 0;
+//     return parseInt(str.replace(/,/g, '')) || 0;
+// }
+// // New function to get phenotype stats
+// export async function getPhenotypeStats(phenoId) {
+//     try {
+//         if (!phenoId || typeof phenoId !== 'string') {
+//             throw new Error(`Invalid phenotype ID: ${phenoId}`);
+//         }
+
+//         const fileContent = await fs.readFile(MANIFEST_PATH, 'utf-8');
+        
+//         // Parse CSV with header
+//         const records = parse(fileContent, {
+//             columns: true,
+//             skip_empty_lines: true,
+//             trim: true
+//         });
+
+//         // Filter records for the specific phenotype
+//         const phenoRecords = records.filter(record => record.Trait.trim() === phenoId.trim());
+        
+//         console.log(`Found ${phenoRecords.length} records for phenotype ${phenoId}`);
+
+//         if (phenoRecords.length === 0) {
+//             throw new Error(`No data found for phenotype: ${phenoId}`);
+//         }
+
+//         // Get populations for this phenotype
+//         const populations = phenoRecords[0].Population.split(',').map(pop => pop.trim());
+
+//         // Initialize stats object
+//         const stats = {
+//             snps_by_cohort: {},
+//             samples_by_cohort: {}
+//         };
+
+//         // For each population, create entries in stats
+//         populations.forEach(pop => {
+//             stats.snps_by_cohort[pop] = parseNumberWithCommas(phenoRecords[0]['N SNP']);
+//             stats.samples_by_cohort[pop] = parseNumberWithCommas(phenoRecords[0]['N All']);
+            
+//             // If it's a binary trait, also add case numbers
+//             if (phenoRecords[0]['Trait type'] === 'Binary') {
+//                 const nCases = parseNumberWithCommas(phenoRecords[0]['N Cases']);
+//                 stats.samples_by_cohort[pop] = nCases;
+//             }
+//         });
+
+//         return {
+//             phenotype_id: phenoId,
+//             trait_description: phenoRecords[0].Description,
+//             category: phenoRecords[0].Category,
+//             trait_type: phenoRecords[0]['Trait type'],
+//             stats: stats
+//         };
+
+//     } catch (err) {
+//         console.error(`Error getting phenotype stats for ${phenoId}:`, err);
+//         throw err;
+//     }
+// }
 function parseNumberWithCommas(str) {
     if (!str || str === '-') return 0;
     return parseInt(str.replace(/,/g, '')) || 0;
 }
-// New function to get phenotype stats
+
 export async function getPhenotypeStats(phenoId) {
     try {
         if (!phenoId || typeof phenoId !== 'string') {
             throw new Error(`Invalid phenotype ID: ${phenoId}`);
         }
 
-        const fileContent = await fs.readFile(MANIFEST_PATH, 'utf-8');
-        
-        // Parse CSV with header
-        const records = parse(fileContent, {
+        // Read and parse the combined SNP info file
+        const snpFileContent = await fs.readFile(COMBINED_SNP_INFO, 'utf-8');
+        const snpRecords = parse(snpFileContent, {
+            columns: ['phenotype', 'cohort', 'analysis_type', 'snp_number'],
+            skip_empty_lines: true,
+            delimiter: ',',
+            trim: true
+        });
+
+        // Filter records for the specific phenotype
+        const phenoSnpRecords = snpRecords.filter(record => 
+            record.phenotype.trim() === phenoId.trim()
+        );
+
+        // Read the manifest file for other metadata
+        const manifestContent = await fs.readFile(MANIFEST_PATH, 'utf-8');
+        const manifestRecords = parse(manifestContent, {
             columns: true,
             skip_empty_lines: true,
             trim: true
         });
 
-        // Filter records for the specific phenotype
-        const phenoRecords = records.filter(record => record.Trait.trim() === phenoId.trim());
-        
-        console.log(`Found ${phenoRecords.length} records for phenotype ${phenoId}`);
+        const phenoManifestRecords = manifestRecords.filter(record => 
+            record.Trait.trim() === phenoId.trim()
+        );
 
-        if (phenoRecords.length === 0) {
-            throw new Error(`No data found for phenotype: ${phenoId}`);
+        if (phenoManifestRecords.length === 0) {
+            throw new Error(`No manifest data found for phenotype: ${phenoId}`);
         }
-
-        // Get populations for this phenotype
-        const populations = phenoRecords[0].Population.split(',').map(pop => pop.trim());
 
         // Initialize stats object
         const stats = {
@@ -44,23 +116,33 @@ export async function getPhenotypeStats(phenoId) {
             samples_by_cohort: {}
         };
 
-        // For each population, create entries in stats
+        // Group SNP records by analysis type and cohort
+        phenoSnpRecords.forEach(record => {
+            if (record.analysis_type === 'mrmega') {
+                stats.snps_by_cohort['ALL'] = parseInt(record.snp_number) || 0;
+            } else if (record.analysis_type === 'gwama') {
+                stats.snps_by_cohort[record.cohort] = parseInt(record.snp_number) || 0;
+            }
+        });
+
+        // Add sample counts from manifest
+        const populations = phenoManifestRecords[0].Population.split(',').map(pop => pop.trim());
         populations.forEach(pop => {
-            stats.snps_by_cohort[pop] = parseNumberWithCommas(phenoRecords[0]['N SNP']);
-            stats.samples_by_cohort[pop] = parseNumberWithCommas(phenoRecords[0]['N All']);
+            stats.samples_by_cohort[pop] = parseNumberWithCommas(phenoManifestRecords[0]['N All']);
             
-            // If it's a binary trait, also add case numbers
-            if (phenoRecords[0]['Trait type'] === 'Binary') {
-                const nCases = parseNumberWithCommas(phenoRecords[0]['N Cases']);
+            if (phenoManifestRecords[0]['Trait type'] === 'Binary') {
+                const nCases = parseNumberWithCommas(phenoManifestRecords[0]['N Cases']);
                 stats.samples_by_cohort[pop] = nCases;
             }
         });
 
+        console.log('Stats for phenotype:', phenoId, stats); // Debug log
+
         return {
             phenotype_id: phenoId,
-            trait_description: phenoRecords[0].Description,
-            category: phenoRecords[0].Category,
-            trait_type: phenoRecords[0]['Trait type'],
+            trait_description: phenoManifestRecords[0].Description,
+            category: phenoManifestRecords[0].Category,
+            trait_type: phenoManifestRecords[0]['Trait type'],
             stats: stats
         };
 
@@ -69,7 +151,6 @@ export async function getPhenotypeStats(phenoId) {
         throw err;
     }
 }
-
 // Helper function to parse a CSV line properly handling quoted fields
 function parseCSVLine(line) {
     const entries = [];
@@ -106,6 +187,7 @@ export async function loadPhenotypeMapping() {
                 const phenotype = fields[0];
                 const traitDescription = fields[1];
                 const category = fields[2];
+                const traitType = fields[4]; // Add this line to get the trait type
                 const populations = fields[3].replace(/"/g, '').split(',').map(pop => pop.trim());
                 const nAll = parseNumberWithCommas(fields[6]);
                 const nCases = parseNumberWithCommas(fields[7]);
@@ -116,6 +198,7 @@ export async function loadPhenotypeMapping() {
                         traitDescription,
                         category,
                         populations,
+                        traitType,
                         nAll,
                         nCases,
                         nSnp

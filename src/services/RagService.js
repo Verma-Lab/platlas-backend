@@ -1,10 +1,9 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import Papa from 'papaparse';
-import dotenv from 'dotenv';
 import { MANIFEST_PATH } from '../config/constants.js';
-dotenv.config();
 
+// const MANIFEST_PATH = process.env.MANIFEST_PATH;
 const CHUNK_SIZE = 1000;
 const CHUNK_OVERLAP = 200;
 
@@ -66,12 +65,14 @@ class RAGService {
 
     async generateEmbeddings() {
         try {
-            const embeddingEndpoint = 'https://data-portal-dev.cels.anl.gov/resource_server/sophia/infinity/v1/embeddings';
+            const baseURL = 'https://data-portal-dev.cels.anl.gov/resource_server/sophia/infinity/v1';
             
             // Generate embeddings in batches
             for (let i = 0; i < this.documents.length; i += 10) {
                 const batch = this.documents.slice(i, i + 10);
-                const response = await fetch(embeddingEndpoint, {
+                
+                // Format request similar to OpenAI's API structure
+                const response = await fetch(`${baseURL}/embeddings`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${this.accessToken}`,
@@ -79,17 +80,27 @@ class RAGService {
                     },
                     body: JSON.stringify({
                         model: 'nvidia/NV-Embed-v2',
-                        input: batch.map(doc => doc.content)
+                        input: batch.map(doc => doc.content),
+                        encoding_format: "float"
                     })
                 });
 
                 if (!response.ok) {
-                    throw new Error(`Embedding generation failed: ${response.statusText}`);
+                    const errorData = await response.text();
+                    throw new Error(`Embedding generation failed: ${response.status} ${response.statusText}\n${errorData}`);
                 }
 
                 const embedResults = await response.json();
-                this.embeddings.push(...embedResults.data.map(e => e.embedding));
+                
+                // Check if the response matches the expected format
+                if (!embedResults.data || !Array.isArray(embedResults.data)) {
+                    throw new Error('Unexpected response format from embedding service');
+                }
+                
+                this.embeddings.push(...embedResults.data.map(item => item.embedding));
             }
+            
+            console.log(`Successfully generated embeddings for ${this.documents.length} documents`);
         } catch (error) {
             console.error('Error generating embeddings:', error);
             throw error;
@@ -122,9 +133,9 @@ class RAGService {
     }
 
     async getQuestionEmbedding(question) {
-        const embeddingEndpoint = 'https://data-portal-dev.cels.anl.gov/resource_server/sophia/infinity/v1/embeddings';
+        const baseURL = 'https://data-portal-dev.cels.anl.gov/resource_server/sophia/infinity/v1';
         
-        const response = await fetch(embeddingEndpoint, {
+        const response = await fetch(`${baseURL}/embeddings`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${this.accessToken}`,
@@ -132,11 +143,22 @@ class RAGService {
             },
             body: JSON.stringify({
                 model: 'nvidia/NV-Embed-v2',
-                input: [question]
+                input: [question],
+                encoding_format: "float"
             })
         });
 
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Question embedding failed: ${response.status} ${response.statusText}\n${errorData}`);
+        }
+
         const result = await response.json();
+        
+        if (!result.data || !Array.isArray(result.data) || result.data.length === 0) {
+            throw new Error('Unexpected response format from embedding service');
+        }
+        
         return result.data[0].embedding;
     }
 
@@ -199,3 +221,4 @@ class RAGService {
 }
 
 export default RAGService;
+
