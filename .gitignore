@@ -1,6 +1,6 @@
 # Environment Variables
 .env
-
+/Users/hritvik/genomics-backend/op8imize-58b8c4ee316b.json
 # Ignore specific directories
 DATABASE/
 SQLDB/
