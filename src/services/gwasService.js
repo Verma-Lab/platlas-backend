@@ -549,7 +549,8 @@ export async function getTopResults(cohortId, phenoId, study) {
             if (results.length === 0) {
                 return { error: 'No data found in file', status: 500 };
             }
-
+            console.log('SENDING TOP RESULTS')
+            console.log(results)
             return { data: results, status: 200 };
 
         } catch (error) {
