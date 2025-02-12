@@ -13,7 +13,7 @@ import fs from 'fs/promises';
 import debug from 'debug';
 import logger from '../utils/logger.js';
 import { searchSNPs } from '../controllers/snpMappingController.js';
-
+import path from 'path';
 const error = debug('app:error');
 const info = debug('app:info');
 // Phenotype routes
