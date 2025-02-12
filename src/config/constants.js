@@ -31,7 +31,7 @@ export const LEAD_MRMEGA_PATH = "/home/ac.guptahr/platlas-backend/DATABASE/Combi
 // Add to constants.js
 export const TABIX_BASE_PATH = 'https://g-fce312.fd635.8443.data.globus.org/tabix';
 
-export const COMBINED_SNP_INFO = '/Users/hritvik/Downloads/combined_SNPs.csv'
+export const COMBINED_SNP_INFO = '/home/ac.guptahr/platlas-backend/DATABASE/Combined_SQLite.csv/combined_SNPs.csv'
 
 
 
