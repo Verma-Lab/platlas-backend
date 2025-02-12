@@ -6,7 +6,7 @@ import logger from '../utils/logger.js';
 import { SNP_MAPPING } from '../config/constants.js';
 
 const execAsync = promisify(exec);
-// const SNP_FILE_PATH = '/Users/hritvik/Downloads/gwPheWAS_All.annotation.txt.gz';
+const SNP_FILE_PATH = SNP_MAPPING
 
 class SNPMappingService {
     async searchSNPs(searchTerm) {
