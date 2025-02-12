@@ -2,7 +2,7 @@ import express, { json } from 'express';
 import cors from 'cors';
 import routes from './routes/index.js';
 import logger  from './utils/logger.js';
-
+import aiRoutes from './routes/aiRoutes.js'
 const app = express();
 const PORT = process.env.PORT || 5001;
 
@@ -16,7 +16,7 @@ app.use((req, res, next) => {
 
 // Routes
 app.use('/api', routes);
-
+app.use('/aiapi', aiRoutes)
 // Error handling
 app.use((err, req, res, next) => {
     logger.error(err.stack);
