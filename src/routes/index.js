@@ -41,7 +41,7 @@ router.get('/getQQPlot', async (req, res) => {
 
         // Construct the file name with the new format
         const fileName = `${phenoId}.${cohortId}.${study}.sumstats.txt.png`;
-        const filePath = path.join('/nfs/platlas_stor/tabix', fileName);
+        const filePath = path.join('/nfs/platlas_stor/qq_plots', fileName);
         
         logger.info(`Looking for QQ plot at path: ${filePath}`);
 
