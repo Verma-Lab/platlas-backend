@@ -3,9 +3,10 @@ import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import logger from '../utils/logger.js';
+import { SNP_MAPPING } from '../config/constants.js';
 
 const execAsync = promisify(exec);
-const SNP_FILE_PATH = '/Users/hritvik/Downloads/gwPheWAS_All.annotation.txt.gz';
+// const SNP_FILE_PATH = '/Users/hritvik/Downloads/gwPheWAS_All.annotation.txt.gz';
 
 class SNPMappingService {
     async searchSNPs(searchTerm) {
