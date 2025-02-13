@@ -11,7 +11,7 @@ class GeminiService {
     }
 
     async generateResponse(prompt, context = [], options = {}) {
-        // console.log(prompt,context, options )
+        console.log(prompt,context, options )
         try {
             const chat = this.model.startChat({
                 generationConfig: {

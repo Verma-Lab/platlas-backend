@@ -16,7 +16,7 @@ app.use((req, res, next) => {
 
 // Routes
 app.use('/api', routes);
-app.use('/aiapi', aiRoutes)
+app.use('/api/aiapi', aiRoutes)
 // Error handling
 app.use((err, req, res, next) => {
     logger.error(err.stack);

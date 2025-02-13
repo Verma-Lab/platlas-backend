@@ -90,10 +90,12 @@ async saveChatMessage(messageData) {
     }
 
     // Document Management (Admin Only)
-    async createDocument(documentData, adminId) {
+    async createDocument(documentData, adminId, collectionName = 'documents') {
         const admin = await this.getUser(adminId);
 
-        const docRef = this.db.collection('documents').doc();
+        // const docRef = this.db.collection('documents').doc();
+        const userRef = this.db.collection(collectionName).doc();
+
         const document = {
             name: documentData.name,
             type: documentData.type,
@@ -105,8 +107,8 @@ async saveChatMessage(messageData) {
             createdAt: Firestore.FieldValue.serverTimestamp()
         };
 
-        await docRef.set(document);
-        return { id: docRef.id, ...document };
+        await userRef.set(document);
+        return { id: userRef.id, ...document };
     }
 
     async getAllDocuments(adminId) {

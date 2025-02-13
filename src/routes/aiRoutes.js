@@ -61,19 +61,23 @@ router.post('/login', async (req, res) => {
 router.post('/chat/message', authMiddleware, async (req, res) => {
     try {
         console.log('Received chat message request');
-        const { message } = req.body;
+        const { message, sourceType, conversationId } = req.body;  // Extract conversationId
         
         if (!message) {
             return res.status(400).json({ error: 'Message is required' });
         }
 
         console.log('Processing message for user:', req.user.id);
-        const response = await chatService.processMessage(req.user.id, message);
+        // const response = await chatService.processMessage(req.user.id, message);
+        const response = await chatService.processMessage(req.user.id, message, conversationId, sourceType);
+
         console.log('Message processed successfully');
         
         return res.status(200).json({
             message: response.message,
-            context: response.context
+            context: response.context,
+            conversationId: response.conversationId
+
         });
     } catch (error) {
         console.error('Chat message error:', error);
@@ -99,21 +103,23 @@ router.get('/chat/history', authMiddleware, async (req, res) => {
 
 
 router.post('/documents/upload', 
-    authMiddleware,  // Add auth middleware
-    upload.single('file'), 
+    authMiddleware,
+    upload.single('file'),
     async (req, res) => {
         try {
-            if (!req.file) {
-                return res.status(400).json({ error: 'No file provided' });
+            const { sourceType } = req.body;
+            console.log('SOURCE', sourceType, req)
+            if (!sourceType) {
+                return res.status(400).json({ error: 'Source type is required' });
             }
-            console.log('UPLOAD ENDPOINT HIT')
+
             const document = await documentService.uploadDocument(
                 req.file,
-                req.user.id,  // Use actual user ID
-                req.body
+                req.user.id,
+                { sourceType }
             );
-            console.log('Document uploaded:', document);
-            return res.status(200).json(document);
+
+            res.status(200).json(document);
         } catch (error) {
             res.status(500).json({ error: error.message });
         }

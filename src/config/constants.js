@@ -15,6 +15,7 @@
 // export const COMBINED_SNP_INFO = '/Users/hritvik/Downloads/combined_SNPs.csv'
 // export const SNP_FILE_PATH = '/Users/hritvik/Downloads/gwPheWAS_All.annotation.txt.gz';
 
+// export const SNP_MAPPING = '/Users/hritvik/Downloads/gwPheWAS_All.annotation.txt.gz'
 
 
 

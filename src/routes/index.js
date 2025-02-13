@@ -26,6 +26,54 @@ router.get('/getTopResults', getTopResults);
 router.get('/getLeadVariants', getLeadVariants);
 router.get('/getGWASStatsRoute', getGWASStatsRoute);
 router.get('/searchSNPs', searchSNPs);
+router.get('/getManhattanPlot', async (req, res) => {
+    const { phenoId, cohortId, study, plotType } = req.query;
+    
+    try {
+        logger.info(`Attempting to fetch Manhattan plot for phenoId: ${phenoId}, cohortId: ${cohortId}, study: ${study}, plotType: ${plotType}`);
+        
+        if (!phenoId || !cohortId || !study || !plotType) {
+            return res.status(400).json({
+                error: 'Missing required parameters',
+                details: 'phenoId, cohortId, study, and plotType are required'
+            });
+        }
+
+        // Construct the file name
+        const fileName = `${plotType}_${phenoId}.${cohortId}.${study}_pval_up_to_0.1.png`;
+        const filePath = path.join('/nfs/platlas_stor/mh_plots/mh_plots', fileName);
+        
+        logger.info(`Looking for Manhattan plot at path: ${filePath}`);
+
+        try {
+            // Check if file exists
+            await fs.access(filePath);
+        } catch (error) {
+            logger.error(`File not found at path: ${filePath}`);
+            return res.status(404).json({ 
+                error: 'Manhattan plot not found',
+                details: `File not found: ${fileName}`
+            });
+        }
+        
+        // Read the file if it exists
+        const fileData = await fs.readFile(filePath);
+        
+        // Set appropriate headers
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+        
+        logger.info(`Successfully sending Manhattan plot for ${fileName}`);
+        res.send(fileData);
+        
+    } catch (error) {
+        logger.error('Error in getManhattanPlot:', error);
+        res.status(500).json({ 
+            error: 'Failed to fetch Manhattan plot',
+            details: error.message 
+        });
+    }
+});
 router.get('/getQQPlot', async (req, res) => {
     const { phenoId, cohortId, study } = req.query;
     

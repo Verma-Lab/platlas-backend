@@ -20,6 +20,13 @@ class DocumentService {
         this.bucket = this.storage.bucket(this.bucketName);
     }
 
+    getCollectionName(sourceType) {
+        const prefix = sourceType.toLowerCase();
+        return {
+            documents: `documents_${prefix}`,
+            vectors: `document_vectors_${prefix}`
+        };
+    }
     async verifyAdmin(userId) {
         const user = await firestore.getUser(userId);
         if (!user || user.role !== 'admin') {
@@ -30,70 +37,83 @@ class DocumentService {
 
     async uploadDocument(file, adminId, metadata = {}) {
         try {
+            console.log('Starting document upload with metadata:', JSON.stringify(metadata));
+            const sourceType = metadata.sourceType ? metadata.sourceType.toLowerCase() : 'default';
+            console.log('Source type for document:', sourceType);
+            
+            const collectionName = (sourceType === 'platlas') ? 'document_platlas' : 'documents';
+            console.log('Using collection:', collectionName);
+
             const fileName = `documents/${uuidv4()}-${file.originalname}`;
+            console.log('Generated filename:', fileName);
+
             const blob = this.bucket.file(fileName);
-            console.log('Starting Uploading')
-    
+            
             const blobStream = blob.createWriteStream({
                 metadata: {
                     contentType: file.mimetype,
                     metadata: {
                         originalName: file.originalname,
-                        uploadedBy: adminId || 'anonymous', // Add default value
+                        uploadedBy: adminId || 'anonymous',
+                        sourceType, // Include sourceType in storage metadata
                         ...metadata
                     }
                 }
             });
-            console.log('File Uploading')
-            console.log(fileName)
-            
+
             return new Promise((resolve, reject) => {
                 blobStream.on('error', (error) => {
-                    console.log('Blob Stream Error:', error); // Add this
+                    console.error('Blob Stream Error:', error);
                     reject(error);
                 });
-                
+
                 blobStream.on('finish', async () => {
                     try {
                         const [url] = await blob.getSignedUrl({
                             action: 'read',
                             expires: Date.now() + 3600000
                         });
-                
+
+                        // Include sourceType in document metadata
                         const document = await firestore.createDocument({
                             name: file.originalname,
                             type: file.mimetype,
                             size: file.size,
                             url,
                             fileName,
-                            metadata
-                        }, adminId || 'anonymous');
-                        
+                            sourceType, // Add sourceType here
+                            metadata: {
+                                ...metadata,
+                                sourceType // And here
+                            }
+                        }, adminId || 'anonymous', collectionName);
+
                         if (file.mimetype.includes('text') || file.mimetype.includes('pdf')) {
-                            await this.processDocumentVectors(document.id, file.buffer, file.mimetype);
-                            const updatedDoc = await firestore.db.collection('documents').doc(document.id).get();
+                            await this.processDocumentVectors(document.id, file.buffer, file.mimetype, sourceType);
+                            const updatedDoc = await firestore.db.collection(collectionName).doc(document.id).get();
                             resolve({ status: 200, data: { id: updatedDoc.id, ...updatedDoc.data() } });
                             return;
                         }
-                
+
                         resolve({ status: 200, data: document });
                     } catch (error) {
-                        console.error('Document upload error:', error);
+                        console.error('Document processing error:', error);
                         reject(error);
                     }
                 });
-    
+
                 blobStream.end(file.buffer);
             });
-    
+
         } catch (error) {
             console.error('Document upload error:', error);
             throw new Error(`Failed to upload document: ${error.message}`);
         }
     }
 
-    async processDocumentVectors(documentId, buffer, mimetype) {
+    async processDocumentVectors(documentId, buffer, mimetype, sourceType) {
         try {
+            console.log('Processing document vectors with sourceType:', sourceType);
             let text;
             if (mimetype === 'application/pdf') {
                 console.log('Processing PDF document...');
@@ -101,40 +121,41 @@ class DocumentService {
                 text = pdfData.text;
                 console.log('PDF text extraction successful');
                 console.log('PDF text length:', text.length);
-                console.log('First 200 characters:', text.substring(0, 200));
             } else {
                 text = buffer.toString('utf-8');
             }
-            
+
             if (!text) {
                 throw new Error('No text content could be extracted from document');
             }
-    
+
             console.log('Starting embedding generation...');
             const embeddings = await geminiService.generateEmbeddings(text);
             console.log('Embeddings generated successfully');
-            
-            console.log('Storing vectors...');
-            await vectorStorage.storeVectors([embeddings], {
-                documentId,
-                text
+
+            // Pass sourceType to vector storage
+            console.log('Storing vectors with sourceType:', sourceType);
+            await vectorStorage.storeVectors([embeddings], { 
+                documentId, 
+                text,
+                sourceType // Make sure to pass sourceType here
             });
-            console.log('Vectors stored successfully');
-    
-            await firestore.db.collection('documents').doc(documentId).update({
+
+            const collectionName = (sourceType === 'platlas') ? 'document_platlas' : 'documents';
+            await firestore.db.collection(collectionName).doc(documentId).update({
                 vectorized: true,
                 vectorizedAt: new Date()
             });
             console.log('Document marked as vectorized');
         } catch (error) {
             console.error('Document vectorization error:', error);
-            await firestore.db.collection('documents').doc(documentId).update({
+            const collectionName = (sourceType === 'platlas') ? 'document_platlas' : 'documents';
+            await firestore.db.collection(collectionName).doc(documentId).update({
                 vectorized: false,
                 vectorError: error.message
             });
         }
     }
-
 
     async deleteDocument(documentId, adminId) {
         try {

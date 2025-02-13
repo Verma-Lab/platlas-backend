@@ -14,6 +14,8 @@ class VectorStorageService {
 
     async storeVectors(vectors, metadata = {}) {
         try {
+            console.log('Starting vector storage with metadata:', JSON.stringify(metadata));
+            
             if (!vectors || !Array.isArray(vectors)) {
                 throw new Error('Vectors must be an array');
             }
@@ -28,11 +30,24 @@ class VectorStorageService {
                 }
             });
 
+            const sourceType = metadata.sourceType ? metadata.sourceType.toLowerCase() : 'default';
+            console.log('Source type:', sourceType);
+            
+            const vectorsCollection = (sourceType === 'platlas') ? 'document_platlas_vectors' : 'document_vectors';
+            console.log('Using collection:', vectorsCollection);
+
             const batch = firestore.db.batch();
             const vectorRefs = [];
 
+            // Verify collection exists or create it
+            const collectionRef = firestore.db.collection(vectorsCollection);
+            const collectionDoc = await collectionRef.limit(1).get();
+            if (collectionDoc.empty) {
+                console.log(`Collection ${vectorsCollection} does not exist, will be created automatically`);
+            }
+
             vectors.forEach((vector, i) => {
-                const vectorRef = firestore.db.collection(this.vectorsCollection).doc();
+                const vectorRef = collectionRef.doc();
                 vectorRefs.push(vectorRef.id);
 
                 const docData = {
@@ -42,30 +57,53 @@ class VectorStorageService {
                         chunk: i,
                         text: metadata.text,
                         createdAt: new Date(),
-                        dimensions: vector.length
+                        dimensions: vector.length,
+                        sourceType: metadata.sourceType || 'default'
                     }
                 };
 
                 batch.set(vectorRef, docData);
+                console.log(`Added vector ${i + 1}/${vectors.length} to batch`);
             });
 
+            console.log('Committing batch write...');
             await batch.commit();
+            console.log('Batch write successful');
             
+            // Verify vectors were stored
+            const verificationPromises = vectorRefs.map(id => 
+                collectionRef.doc(id).get()
+            );
+            
+            const verificationResults = await Promise.all(verificationPromises);
+            const storedCount = verificationResults.filter(doc => doc.exists).length;
+            
+            console.log(`Verified ${storedCount}/${vectors.length} vectors stored successfully`);
+            
+            if (storedCount !== vectors.length) {
+                throw new Error(`Only ${storedCount}/${vectors.length} vectors were stored successfully`);
+            }
+
             return {
                 vectorIds: vectorRefs,
-                count: vectors.length
+                count: vectors.length,
+                collection: vectorsCollection
             };
         } catch (error) {
             console.error('Vector storage error:', error);
+            console.error('Stack trace:', error.stack);
             throw new Error(`Failed to store vectors: ${error.message}`);
         }
     }
 
-async searchVectors(queryVector, limit = 5) {
-    try {
+    async searchVectors(queryVector, limit = 5, sourceType = 'default') {
+        try {
         console.log('Starting vector search with query vector length:', queryVector.length);
-        
-        const snapshot = await firestore.db.collection(this.vectorsCollection).get();
+        console.log(sourceType)
+        const vectorsCollection = (sourceType.toLowerCase() === 'platlas')
+         ? 'document_platlas_vectors'
+         : this.vectorsCollection;
+       const snapshot = await firestore.db.collection(vectorsCollection).get();
         console.log('Retrieved vectors from Firestore:', snapshot.size);
         
         if (snapshot.empty) {
