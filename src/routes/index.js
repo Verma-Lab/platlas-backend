@@ -41,7 +41,9 @@ router.get('/getManhattanPlot', async (req, res) => {
 
         // Construct the file name
         const fileName = `${plotType}_${phenoId}.${cohortId}.${study}_pval_up_to_0.1.png`;
-        const filePath = path.join('/nfs/platlas_stor/mh_plots/mh_plots', fileName);
+        const filePath = path.join('/nfs/platlas_stor/mh_plots', fileName);
+        // const filePath = path.join('/Users/hritvik/all-by-all-browser/LPCFiltering/testing_data', fileName);
+
         
         logger.info(`Looking for Manhattan plot at path: ${filePath}`);
 
