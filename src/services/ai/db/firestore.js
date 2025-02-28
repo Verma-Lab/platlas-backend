@@ -61,6 +61,8 @@ async saveChatMessage(messageData) {
         content: messageData.content,
         role: messageData.role, // 'user' or 'assistant'
         context: messageData.context || null,
+        model: messageData.model || 'default',      // Add model
+        database: messageData.database || 'default', 
         createdAt: Firestore.FieldValue.serverTimestamp()
     };
     await messageRef.set(message);

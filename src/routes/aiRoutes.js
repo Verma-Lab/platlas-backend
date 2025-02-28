@@ -58,27 +58,61 @@ router.post('/login', async (req, res) => {
 // Chat routes
 // In your aiRoutes.js
 // backend/src/routes/aiRoutes.js
+// router.post('/chat/message', authMiddleware, async (req, res) => {
+//     try {
+//         console.log('Received chat message request');
+//         const { message, conversationId, model, database } = req.body;
+        
+//         if (!message) {
+//             return res.status(400).json({ error: 'Message is required' });
+//         }
+
+//         console.log('Processing message for user:', req.user.id);
+//         // const response = await chatService.processMessage(req.user.id, message);
+//         const response = await chatService.processMessage(
+//             req.user.id,
+//             message,
+//             conversationId,
+//             model,      // New parameter
+//             database    // New parameter
+//         );
+//         console.log('Message processed successfully');
+        
+//         return res.status(200).json({
+//             message: response.message,
+//             context: response.context,
+//             conversationId: response.conversationId
+
+//         });
+//     } catch (error) {
+//         console.error('Chat message error:', error);
+//         res.status(500).json({ 
+//             error: error.message,
+//             details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+//         });
+//     }
+// });
 router.post('/chat/message', authMiddleware, async (req, res) => {
     try {
         console.log('Received chat message request');
-        const { message, sourceType, conversationId } = req.body;  // Extract conversationId
+        const { message, conversationId, model, database } = req.body;
         
         if (!message) {
             return res.status(400).json({ error: 'Message is required' });
         }
 
         console.log('Processing message for user:', req.user.id);
-        // const response = await chatService.processMessage(req.user.id, message);
-        const response = await chatService.processMessage(req.user.id, message, conversationId, sourceType);
-
+        const response = await chatService.processMessage(
+            req.user.id,
+            message,
+            conversationId,
+            model,
+            database
+        );
         console.log('Message processed successfully');
         
-        return res.status(200).json({
-            message: response.message,
-            context: response.context,
-            conversationId: response.conversationId
-
-        });
+        // Send the entire response object
+        return res.status(200).json(response);
     } catch (error) {
         console.error('Chat message error:', error);
         res.status(500).json({ 
@@ -87,7 +121,6 @@ router.post('/chat/message', authMiddleware, async (req, res) => {
         });
     }
 });
-
 router.get('/chat/history', authMiddleware, async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 50;
@@ -107,16 +140,16 @@ router.post('/documents/upload',
     upload.single('file'),
     async (req, res) => {
         try {
-            const { sourceType } = req.body;
-            console.log('SOURCE', sourceType, req)
-            if (!sourceType) {
+            const { database } = req.body;
+            console.log('SOURCE', database, req)
+            if (!database) {
                 return res.status(400).json({ error: 'Source type is required' });
             }
 
             const document = await documentService.uploadDocument(
                 req.file,
                 req.user.id,
-                { sourceType }
+                { database }
             );
 
             res.status(200).json(document);

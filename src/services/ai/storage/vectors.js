@@ -30,10 +30,10 @@ class VectorStorageService {
                 }
             });
 
-            const sourceType = metadata.sourceType ? metadata.sourceType.toLowerCase() : 'default';
-            console.log('Source type:', sourceType);
+            const database = metadata.database ? metadata.database.toLowerCase() : 'default';
+            console.log('Database:', database);
             
-            const vectorsCollection = (sourceType === 'platlas') ? 'document_platlas_vectors' : 'document_vectors';
+            const vectorsCollection = (database === 'platlas') ? 'document_platlas_vectors' : 'document_vectors';
             console.log('Using collection:', vectorsCollection);
 
             const batch = firestore.db.batch();
@@ -58,7 +58,7 @@ class VectorStorageService {
                         text: metadata.text,
                         createdAt: new Date(),
                         dimensions: vector.length,
-                        sourceType: metadata.sourceType || 'default'
+                        database: metadata.database || 'default'
                     }
                 };
 
@@ -96,13 +96,15 @@ class VectorStorageService {
         }
     }
 
-    async searchVectors(queryVector, limit = 5, sourceType = 'default') {
+    async searchVectors(queryVector, limit = 5, database = 'default') {
         try {
         console.log('Starting vector search with query vector length:', queryVector.length);
-        console.log(sourceType)
-        const vectorsCollection = (sourceType.toLowerCase() === 'platlas')
+        console.log(database)
+        const vectorsCollection = (database.toLowerCase() === 'platlas')
          ? 'document_platlas_vectors'
          : this.vectorsCollection;
+
+        console.log('SEARCH VECTORS', database, vectorsCollection)
        const snapshot = await firestore.db.collection(vectorsCollection).get();
         console.log('Retrieved vectors from Firestore:', snapshot.size);
         

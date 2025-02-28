@@ -8,16 +8,22 @@ export async function getPhewasData(snp, chromosome, position, study) {
         const dbPath = study === 'mrmega' 
             ? MRMEGA_DB
             : GWAMA_DB;
-        console.log(dbPath);
+        console.log('Using database:', dbPath);
         
         db = new sqlite3(dbPath);
         
-        const rows = db.prepare(`
-            SELECT SNP_ID, phenotype, chromosome, position, ref_allele, alt_allele, pvalue
-            FROM phewas_snp_data 
-            WHERE SNP_ID = ? AND chromosome = ? AND position = ?
-        `).all(snp, chromosome, position);
+        // Use the correct table name based on study
+        const tableName = study === 'mrmega' ? 'phewas_snp_data_mrmega' : 'phewas_snp_data';
         
+        // First try with just SNP_ID
+        const query = `
+            SELECT * FROM ${tableName}
+            WHERE SNP_ID = ?
+        `;
+        
+        const rows = db.prepare(query).all(snp);
+        console.log(`Found ${rows.length} rows for SNP ${snp}`);
+
         if (rows.length === 0) {
             return {
                 message: `No data found for SNP: ${snp} in ${study} database`,
@@ -38,6 +44,11 @@ export async function getPhewasData(snp, chromosome, position, study) {
             ref_allele: row.ref_allele,
             alt_allele: row.alt_allele,
             pvalue: row.pvalue,
+            beta: row.beta,
+            se: row.se,
+            aaf: row.aaf,
+            n: row.n,
+            n_study: row.n_study,
             study: study
         }));
 
@@ -51,7 +62,7 @@ export async function getPhewasData(snp, chromosome, position, study) {
         };
 
     } catch (error) {
-        _error(`Error in PheWAS query for ${study}: ${error.message}`);
+        console.error(`Error in PheWAS query for ${study}:`, error);
         throw error;
     } finally {
         if (db) db.close();
