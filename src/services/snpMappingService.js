@@ -7,6 +7,7 @@ import { SNP_MAPPING } from '../config/constants.js';
 
 const execAsync = promisify(exec);
 const SNP_FILE_PATH = SNP_MAPPING
+// 0|platlas-backend  | Found 0 rows for SNP 1:63667:C:T
 
 class SNPMappingService {
     async searchSNPs(searchTerm) {
@@ -19,6 +20,8 @@ class SNPMappingService {
             const command = `tabix ${SNP_FILE_PATH} 1 | head -n 50`;
             const { stdout } = await execAsync(command);
             
+
+            
             if (!stdout.trim()) {
                 return { results: [] };
             }
@@ -28,7 +31,7 @@ class SNPMappingService {
             // Map the results to the expected format
             const results = lines.map(line => {
                 const fields = line.split('\t');
-                // console.log(fields)
+                // console.log("fields",fields)
                 return {
                     type: 'snp',
                     rsId: fields[14],  // We'll fix the actual rsId
