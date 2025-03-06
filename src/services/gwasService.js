@@ -274,58 +274,57 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
       const results = {};
       
       // If no range is specified, we need to determine the global data boundaries
-if (minPval === null || maxPval === null) {
-    console.log('No p-value range specified, finding global min/max values from data...');
-    
-    let minPvalFound = 1.0;
-    let maxPvalFound = 0.0;
-    
-    const sampleChromosomes = [1, 10, 22];
-    
-    for (const chrom of sampleChromosomes) {
-        try {
-            const chromData = await fetchTabixData(chrom, filePath);
-            chromData.forEach(row => {
-                const p = parseFloat(row.p);
-                if (p > 0 && p < minPvalFound) minPvalFound = p;
-                if (p > maxPvalFound) maxPvalFound = p;
-            });
-        } catch (error) {
-            console.error(`Error sampling chromosome ${chrom}: ${error.message}`);
+      if (minPval === null || maxPval === null) {
+        console.log('No p-value range specified, finding global min/max values from data...');
+        
+        let minPvalFound = 1.0;  // Highest possible p-value
+        let maxPvalFound = 0.0;  // Lowest possible p-value
+        
+        // Sample ALL chromosomes to get true maximum, not just a subset
+        const allChromosomes = Array.from({length: 22}, (_, i) => i + 1);
+        
+        for (const chrom of allChromosomes) {
+            try {
+                const chromData = await fetchTabixData(chrom, filePath);
+                chromData.forEach(row => {
+                    const p = parseFloat(row.p);
+                    if (p > 0 && p < minPvalFound) minPvalFound = p;  // Most significant
+                    if (p > maxPvalFound) maxPvalFound = p;          // Least significant
+                });
+            } catch (error) {
+                console.error(`Error sampling chromosome ${chrom}: ${error.message}`);
+            }
         }
-    }
-    
-    // Convert to -log10 scale
-    const maxLog10p = minPvalFound > 0 ? -Math.log10(minPvalFound) : 0;
-    const minLog10p = -Math.log10(maxPvalFound);
-    
-    console.log(`Found p-value range: ${minPvalFound} to ${maxPvalFound}`);
-    console.log(`Corresponding to -log10(p) range: ${minLog10p} to ${maxLog10p}`);
-    
-    if (minPvalFound < 1.0) {
-        // Check if max significance exceeds 200 in -log10 scale
-        if (maxLog10p > 200) {
-            // Set minimum threshold to 200 in -log10 scale
-            minPval = Math.pow(10, -200);  // Convert 200 -log10(p) back to p-value
-            maxPval = minPvalFound;        // Keep the most significant value as max
-            
-            console.log(`Values exceed 200, setting min to 200 (-log10p): p-value range ${minPval} to ${maxPval}`);
-            console.log(`Corresponding to -log10(p) range: 200 to ${maxLog10p}`);
+        
+        // Convert to -log10 scale
+        const maxLog10p = minPvalFound > 0 ? -Math.log10(minPvalFound) : 0;
+        const minLog10p = -Math.log10(maxPvalFound);
+        
+        console.log(`Found p-value range: ${minPvalFound} to ${maxPvalFound}`);
+        console.log(`Corresponding to -log10(p) range: ${minLog10p} to ${maxLog10p}`);
+        
+        if (minPvalFound < 1.0) {
+            if (maxLog10p > 200) {
+                // Set min to 200 (-log10p) and keep the actual maximum
+                minPval = Math.pow(10, -200);    // 200 in -log10 scale
+                maxPval = minPvalFound;          // Most significant p-value (could be 4.44e-461)
+                
+                console.log(`Values exceed 200, setting min to 200 (-log10p): p-value range ${minPval} to ${maxPval}`);
+                console.log(`Corresponding to -log10(p) range: 200 to ${maxLog10p}`);
+            } else {
+                // For values not exceeding 200
+                minPval = minPvalFound;
+                maxPval = Math.min(minPvalFound * 10, maxPvalFound);
+                
+                console.log(`Setting initial view to p-value range: ${minPval} to ${maxPval}`);
+                console.log(`Corresponding to -log10(p) range: ${-Math.log10(maxPval)} to ${maxLog10p}`);
+            }
         } else {
-            // Original logic for values not exceeding 200
-            minPval = minPvalFound;
-            maxPval = Math.min(minPvalFound * 10, maxPvalFound);
-            
-            console.log(`Setting initial view to p-value range: ${minPval} to ${maxPval}`);
-            console.log(`Corresponding to -log10(p) range: ${-Math.log10(maxPval)} to ${maxLog10p}`);
+            maxPval = 1e-6;
+            minPval = 1e-5;
+            console.log(`No valid p-values found, using default range: ${minPval} to ${maxPval}`);
         }
-    } else {
-        // Fallback if no valid p-values
-        maxPval = 1e-6;
-        minPval = 1e-5;
-        console.log(`No valid p-values found, using default range: ${minPval} to ${maxPval}`);
     }
-}
       
       // Now fetch actual data within the determined range
       console.log(`Fetching data with p-value range: ${minPval} to ${maxPval}`);
