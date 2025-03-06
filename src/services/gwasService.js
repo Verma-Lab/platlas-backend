@@ -323,7 +323,7 @@ const parsePValue = (pStr) => {
     return parseFloat(pValStr);
 };
         
-        console.log("parsevalue",  parsePValue(minPval.toString()), minPval)
+        console.log("parse pvalue",  parsePValue(minPval.toString()), minPval)
         console.log("parsevalue",  parsePValue(maxPval.toString()), maxPval)
 
         // Convert minPval and maxPval to usable numbers if provided
