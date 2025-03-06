@@ -291,16 +291,37 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         const results = {};
 
         // Custom p-value parsing function
-        const parsePValue = (pStr) => {
-            if (typeof pStr !== 'string') return parseFloat(pStr); // Fallback for non-string input
-            const match = pStr.match(/(\d+\.?\d*)e-(\d+)/i); // e.g., "1e-500" or "1.5e-600"
-            if (match) {
-                const [, mantissa, exponent] = match;
-                const mantissaNum = parseFloat(mantissa);
-                return mantissaNum * Math.pow(10, -parseInt(exponent));
-            }
-            return parseFloat(pStr); // Fallback for non-scientific notation
-        };
+       // Custom p-value parsing function that preserves string representations for extreme values
+const parsePValue = (pStr) => {
+    // For null or undefined values
+    if (pStr === null || pStr === undefined) return 0;
+    
+    // Convert to string if it's not already
+    const pValStr = String(pStr);
+    
+    // Check for scientific notation format like "1e-400"
+    const match = pValStr.match(/^(\d+\.?\d*)e-(\d+)$/i);
+    if (match) {
+        const mantissa = parseFloat(match[1]);
+        const exponent = parseInt(match[2]);
+        
+        // If exponent is too large for JavaScript to handle precisely
+        if (exponent > 308) {
+            // Return a special object representation instead of trying to compute
+            return {
+                type: "scientific",
+                mantissa: mantissa,
+                exponent: exponent,
+                toString: () => `${mantissa}e-${exponent}`
+            };
+        }
+        // Otherwise, use standard math
+        return mantissa * Math.pow(10, -exponent);
+    }
+    
+    // Regular parsing for non-scientific notation
+    return parseFloat(pValStr);
+};
         
         console.log("parsevalue",  parsePValue(minPval.toString()), minPval)
         console.log("parsevalue",  parsePValue(maxPval.toString()), maxPval)
