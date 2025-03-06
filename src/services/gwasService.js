@@ -278,6 +278,7 @@ export async function findFiles(phenoId, cohort, study) {
 // }
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
+    
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
             return { error: 'Invalid study type.', status: 500 };
         }
@@ -313,10 +314,12 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             promises.push(
                 fetchTabixData(chrom, filePath)
                     .then(chromData => {
+                        // Filter based on p-value range using string comparison
                         const filteredData = chromData.filter(row => {
-                            const logP = parsePValueExponent(row.p);
-                            return logP >= effectiveMinLogP && logP <= effectiveMaxLogP;
+                            const p = parsePValue(row.p); // Parse as string first
+                            return p >= effectiveMinPval && p <= effectiveMaxPval;
                         });
+
                         if (filteredData.length > 0) {
                             results[chrom] = filteredData;
                         }
@@ -346,11 +349,11 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
 
         return {
             data: results,
-    status: 200,
-    pValueRange: {
-        maxPValue: maxPval !== null ? maxPval : "1e-100", // Return as string
-        minPValue: minPval !== null ? minPval : "0"       // Return as string
-    }
+            status: 200,
+            pValueRange: {
+                maxPValue: effectiveMaxPval,
+                minPValue: effectiveMinPval
+            }
         };
     } catch (error) {
         console.error(`Error querying GWAS data: ${error.message}`);
