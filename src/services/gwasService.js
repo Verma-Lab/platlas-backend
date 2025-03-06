@@ -272,16 +272,27 @@ export async function queryGWASData(phenoId, cohortId, study, minPval, maxPval) 
       await fs.access(`${filePath}.tbi`);
   
       const results = {};
+      let maxPvalFound = 0; // Largest (least significant) p-value
+  
       const promises = [];
-      
       for (let chrom = 1; chrom <= 22; chrom++) {
         promises.push(
           fetchTabixData(chrom, filePath)
             .then(chromData => {
-              // Filter data based on p-value range
-              const filteredData = chromData.filter(row => 
-                row.p >= minPval && row.p <= maxPval
-              );
+              // Find max p-value
+              chromData.forEach(row => {
+                const p = parseFloat(row.p);
+                if (p > maxPvalFound) maxPvalFound = p;
+              });
+  
+              // Filter based on provided or initial range
+              const effectiveMin = minPval !== null && !isNaN(minPval) ? minPval : (maxPvalFound - 1);
+              const effectiveMax = maxPval !== null && !isNaN(maxPval) ? maxPval : maxPvalFound;
+              const filteredData = chromData.filter(row => {
+                const p = parseFloat(row.p);
+                return p >= effectiveMin && p <= effectiveMax;
+              });
+  
               if (filteredData.length > 0) {
                 results[chrom] = filteredData;
               }
@@ -294,13 +305,29 @@ export async function queryGWASData(phenoId, cohortId, study, minPval, maxPval) 
       }
   
       await Promise.all(promises);
+  
       const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
-      
       if (totalRows === 0) {
         return { error: 'No data found in the specified p-value range', status: 500 };
       }
   
-      return { data: results, status: 200 };
+      // Return the range with the data
+      const response = {
+        data: results,
+        status: 200
+      };
+  
+      // If initial fetch, include the calculated range
+      if (minPval === null || maxPval === null) {
+        const initialMaxPval = maxPvalFound === 0 ? 1e-5 : maxPvalFound; // Default if no data
+        const initialMinPval = initialMaxPval - 1 >= 0 ? initialMaxPval - 1 : 0; // Ensure non-negative
+        response.pValueRange = {
+          maxPValue: initialMaxPval,
+          minPValue: initialMinPval
+        };
+      }
+  
+      return response;
     } catch (error) {
       console.error(`Error querying GWAS data: ${error.message}`);
       return { error: error.message, status: 500 };
