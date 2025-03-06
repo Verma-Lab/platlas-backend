@@ -67,48 +67,38 @@ import {
 // }
 
 export async function queryGWASData(req, res) {
-  const { phenoId, cohortId, study } = req.query;
-  if (!phenoId || !cohortId || !study) {
-    return res.status(400).json({ 
-      error: 'phenoId, cohortId, and study are required parameters.' 
-    });
-  }
-
-  try {
-    // Initial validation from service
-    const { error, status, data } = await queryGWASDataService(phenoId, cohortId, study);
-    if (error) {
-      console.error('GWAS Data Error:', error);
-      return res.status(status).json({ error });
+    const { phenoId, cohortId, study, minPval, maxPval } = req.query;
+    if (!phenoId || !cohortId || !study || !minPval || !maxPval) {
+      return res.status(400).json({ 
+        error: 'phenoId, cohortId, study, minPval, and maxPval are required.' 
+      });
     }
-
-    // Stream response
-    res.setHeader('Content-Type', 'application/json');
-    res.write('{"data":{'); // Start JSON object
-
-    let isFirstChrom = true;
-    for (const [chrom, chromData] of Object.entries(data)) {
-      if (chromData.length > 0) {
-        if (!isFirstChrom) {
-          res.write(',');
+  
+    try {
+      const { error, status, data } = await queryGWASDataService(phenoId, cohortId, study, parseFloat(minPval), parseFloat(maxPval));
+      if (error) {
+        return res.status(status).json({ error });
+      }
+  
+      res.setHeader('Content-Type', 'application/json');
+      res.write('{"data":{');
+      let isFirstChrom = true;
+      for (const [chrom, chromData] of Object.entries(data)) {
+        if (chromData.length > 0) {
+          if (!isFirstChrom) res.write(',');
+          res.write(`"${chrom}":${JSON.stringify(chromData)}`);
+          isFirstChrom = false;
         }
-        res.write(`"${chrom}":${JSON.stringify(chromData)}`);
-        isFirstChrom = false;
+      }
+      res.write('}}');
+      res.end();
+    } catch (error) {
+      console.error(`Error in queryGWASData controller: ${error.message}`);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
       }
     }
-
-    res.write('}}'); // End JSON object
-    res.end();
-  } catch (error) {
-    console.error(`Error in queryGWASData controller: ${error.message}`);
-    if (!res.headersSent) {
-      res.status(500).json({ error: error.message });
-    } else {
-      res.write(JSON.stringify({ error: error.message }));
-      res.end();
-    }
   }
-}
 
 // export async function queryGWASData(req, res) {
 //     try {

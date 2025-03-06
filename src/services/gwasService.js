@@ -259,39 +259,31 @@ export async function findFiles(phenoId, cohort, study) {
 //         return { error: error.message, status: 500 };
 //     }
 // }
-export async function queryGWASData(phenoId, cohortId, study) {
+export async function queryGWASData(phenoId, cohortId, study, minPval, maxPval) {
     try {
       if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
-        return { error: 'Invalid study type. Must be "gwama" or "mrmega".', status: 500 };
+        return { error: 'Invalid study type.', status: 500 };
       }
   
       const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
       const filePath = join(GWAS_FILES_PATH, gz_file);
   
-      console.log(`Attempting to access file: ${filePath}`);
-      try {
-        await fs.access(filePath);
-        console.log('File found:', gz_file);
-      } catch {
-        return { error: `GWAS data file not found: ${gz_file}`, status: 500 };
-      }
-  
-      const indexPath = `${filePath}.tbi`;
-      try {
-        await fs.access(indexPath);
-        console.log('Index file found');
-      } catch {
-        return { error: `Tabix index not found for file: ${gz_file}`, status: 500 };
-      }
+      await fs.access(filePath);
+      await fs.access(`${filePath}.tbi`);
   
       const results = {};
       const promises = [];
+      
       for (let chrom = 1; chrom <= 22; chrom++) {
         promises.push(
           fetchTabixData(chrom, filePath)
             .then(chromData => {
-              if (chromData.length > 0) {
-                results[chrom] = chromData;
+              // Filter data based on p-value range
+              const filteredData = chromData.filter(row => 
+                row.p >= minPval && row.p <= maxPval
+              );
+              if (filteredData.length > 0) {
+                results[chrom] = filteredData;
               }
             })
             .catch(error => {
@@ -303,13 +295,10 @@ export async function queryGWASData(phenoId, cohortId, study) {
   
       await Promise.all(promises);
       const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
+      
       if (totalRows === 0) {
-        return { error: 'No data found in the file', status: 500 };
+        return { error: 'No data found in the specified p-value range', status: 500 };
       }
-  
-      console.log(`Processed data for file: ${gz_file}`);
-      console.log(`Found data for chromosomes: ${Object.keys(results).join(', ')}`);
-      console.log(`Total Data Rows: ${totalRows}`);
   
       return { data: results, status: 200 };
     } catch (error) {
