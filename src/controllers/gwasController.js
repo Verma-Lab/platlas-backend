@@ -67,17 +67,22 @@ import {
 // }
 export async function queryGWASData(req, res) {
     const { phenoId, cohortId, study, minPval, maxPval } = req.query;
+    
     if (!phenoId || !cohortId || !study) {
       return res.status(400).json({ 
-        error: 'phenoId, cohortId, and study are required.' 
+        error: 'phenoId, cohortId, and study are required parameters' 
       });
     }
   
     try {
+      console.log(`Received GWAS data request for ${phenoId}, ${cohortId}, ${study}`);
+      console.log(`P-value range parameters: min=${minPval || 'not specified'}, max=${maxPval || 'not specified'}`);
+      
       // Parse p-value range (or pass null for auto-detection)
       const minPvalParsed = minPval ? parseFloat(minPval) : null;
       const maxPvalParsed = maxPval ? parseFloat(maxPval) : null;
       
+      // Call the service function
       const result = await queryGWASDataService(
         phenoId, 
         cohortId, 
@@ -86,17 +91,25 @@ export async function queryGWASData(req, res) {
         maxPvalParsed
       );
       
+      // Handle error cases
       if (result.error) {
+        console.error(`GWAS data error: ${result.error}`);
         return res.status(result.status).json({ 
           error: result.error,
           pValueRange: result.pValueRange // Include range even in error cases
         });
       }
   
+      // Count total data points for logging
+      const totalPoints = Object.values(result.data)
+        .reduce((sum, chromData) => sum + chromData.length, 0);
+      
+      console.log(`Returning ${totalPoints} data points in p-value range: ${result.pValueRange.minPValue} to ${result.pValueRange.maxPValue}`);
+      
       // Stream the response to handle large datasets
       res.setHeader('Content-Type', 'application/json');
       
-      // Start the JSON object and include the p-value range
+      // Start the JSON response
       res.write('{');
       
       // Always include the p-value range
@@ -105,6 +118,7 @@ export async function queryGWASData(req, res) {
       // Write the data object
       res.write('"data":{');
       
+      // Stream each chromosome's data
       let isFirstChrom = true;
       for (const [chrom, chromData] of Object.entries(result.data)) {
         if (chromData.length > 0) {
@@ -114,7 +128,7 @@ export async function queryGWASData(req, res) {
         }
       }
       
-      // Close objects
+      // Close the response objects
       res.write('}}');
       res.end();
       
