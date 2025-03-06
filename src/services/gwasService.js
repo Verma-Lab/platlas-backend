@@ -276,6 +276,55 @@ export async function findFiles(phenoId, cohort, study) {
 //       return { error: error.message, status: 500 };
 //     }
 // }
+// Helper function to compare p-values, including string representations
+const comparePValues = (p1, p2, operator) => {
+    // If p1 is our special object type
+    if (p1 && typeof p1 === 'object' && p1.type === 'scientific') {
+        // If p2 is also our special object type
+        if (p2 && typeof p2 === 'object' && p2.type === 'scientific') {
+            // Compare exponents first (higher exponent = smaller value)
+            if (p1.exponent !== p2.exponent) {
+                if (operator === '<') return p1.exponent > p2.exponent;
+                if (operator === '<=') return p1.exponent >= p2.exponent;
+                if (operator === '>') return p1.exponent < p2.exponent;
+                if (operator === '>=') return p1.exponent <= p2.exponent;
+                if (operator === '===') return p1.exponent === p2.exponent && p1.mantissa === p2.mantissa;
+            }
+            // If exponents are equal, compare mantissas
+            if (operator === '<') return p1.mantissa < p2.mantissa;
+            if (operator === '<=') return p1.mantissa <= p2.mantissa;
+            if (operator === '>') return p1.mantissa > p2.mantissa;
+            if (operator === '>=') return p1.mantissa >= p2.mantissa;
+            if (operator === '===') return p1.mantissa === p2.mantissa;
+        }
+        // p1 is scientific but p2 is a regular number
+        // Any number in scientific notation with exponent > 308 is smaller than regular numbers
+        if (operator === '<') return true;  // p1 < p2
+        if (operator === '<=') return true; // p1 <= p2
+        if (operator === '>') return false; // p1 > p2
+        if (operator === '>=') return false; // p1 >= p2
+        if (operator === '===') return false; // p1 === p2
+    }
+    
+    // If p2 is our special object type but p1 is not
+    if (p2 && typeof p2 === 'object' && p2.type === 'scientific') {
+        // Any number in scientific notation with exponent > 308 is smaller than regular numbers
+        if (operator === '<') return false; // p1 < p2
+        if (operator === '<=') return false; // p1 <= p2
+        if (operator === '>') return true;  // p1 > p2
+        if (operator === '>=') return true; // p1 >= p2
+        if (operator === '===') return false; // p1 === p2
+    }
+    
+    // Both are regular numbers
+    if (operator === '<') return p1 < p2;
+    if (operator === '<=') return p1 <= p2;
+    if (operator === '>') return p1 > p2;
+    if (operator === '>=') return p1 >= p2;
+    if (operator === '===') return p1 === p2;
+    
+    return false; // Default case
+};
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
@@ -326,12 +375,14 @@ const parsePValue = (pStr) => {
         console.log("parse pvalue",  parsePValue(minPval.toString()), minPval)
         console.log("parsevalue",  parsePValue(maxPval.toString()), maxPval)
 
-        // Convert minPval and maxPval to usable numbers if provided
-        const effectiveMinPval = minPval !== null ? parsePValue(minPval.toString()) : 0;
-        const effectiveMaxPval = maxPval !== null ? parsePValue(maxPval.toString()) : 1e-100;
-
-        console.log(`Fetching data with p-value range: ${effectiveMinPval} to ${effectiveMaxPval}`);
-
+        const parsedMinPval = minPval !== null ? parsePValue(minPval) : 0;
+        const parsedMaxPval = maxPval !== null ? parsePValue(maxPval) : 1e-100;
+        
+        console.log("Parsed min p-value:", typeof parsedMinPval === 'object' ? 
+            parsedMinPval.toString() : parsedMinPval);
+        console.log("Parsed max p-value:", typeof parsedMaxPval === 'object' ? 
+            parsedMaxPval.toString() : parsedMaxPval);
+        
         const promises = [];
         for (let chrom = 1; chrom <= 22; chrom++) {
             promises.push(
@@ -339,8 +390,9 @@ const parsePValue = (pStr) => {
                     .then(chromData => {
                         // Filter based on p-value range using string comparison
                         const filteredData = chromData.filter(row => {
-                            const p = parsePValue(row.p); // Parse as string first
-                            return p >= effectiveMinPval && p <= effectiveMaxPval;
+                            const rowP = parsePValue(row.p);
+                            return comparePValues(rowP, parsedMinPval, '>=') && 
+                                   comparePValues(rowP, parsedMaxPval, '<=');
                         });
 
                         if (filteredData.length > 0) {
