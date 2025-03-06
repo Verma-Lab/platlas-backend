@@ -12,6 +12,8 @@ import { parse } from 'csv-parse/sync';
 import { createReadStream } from 'fs';
 import { createGunzip } from 'zlib';
 import { createInterface } from 'readline';
+import { spawn } from 'child_process';
+import readline from 'readline';
 
 
 const COLUMNS = {
@@ -48,51 +50,115 @@ function parseNA(value, parser = parseFloat) {
   return parser(value);
 }
 
+
 async function fetchTabixData(chrom, filePath) {
-  try {
-    const { stdout } = await execAsync(`tabix ${filePath} ${chrom}`);
-    return stdout.split('\n')
-      .filter(line => line.trim())
-      .map(line => {
-        const fields = line.split('\t');
-        const pval = parseScientificNotation(fields[COLUMNS.P]);
-        
-        if (pval !== null) {
-          return {
-            id: fields[COLUMNS.ID].replace('#ID: ', ''),
-            chr: parseInt(fields[COLUMNS.CHR]),
-            pos: parseInt(fields[COLUMNS.POS]),
-            ref: fields[COLUMNS.REF],
-            alt: fields[COLUMNS.ALT],
-            beta: parseFloat(fields[COLUMNS.BETA]),
-            se: parseFloat(fields[COLUMNS.SE]),
-            p: pval,
-            log10p: parseFloat(fields[COLUMNS.LOG10P]),
-            se_ldsc: parseNA(fields[COLUMNS.SE_LDSC]),
-            p_ldsc: parseScientificNotation(fields[COLUMNS.P_LDSC]),
-            log10p_ldsc: parseNA(fields[COLUMNS.LOG10P_LDSC]),
-            aaf: parseNA(fields[COLUMNS.AAF]),
-            aaf_case: parseNA(fields[COLUMNS.AAF_CASE]),
-            aac: parseNA(fields[COLUMNS.AAC]),
-            aac_case: parseNA(fields[COLUMNS.AAC_CASE]),
-            n: parseNA(fields[COLUMNS.N], parseInt),
-            n_case: parseNA(fields[COLUMNS.N_CASE], parseInt),
-            n_study: parseInt(fields[COLUMNS.N_STUDY]),
-            effect: fields[COLUMNS.EFFECT],
-            p_hetero: parseNA(fields[COLUMNS.P_HETERO])
-          };
-        }
-        return null;
-      })
-      .filter(result => result !== null);
-  } catch (error) {
-    if (error.message.includes('No regions in query')) {
-      return [];
-    }
-    console.error(`Error in fetchTabixData for chromosome ${chrom}: ${error.message}`);
-    throw error;
-  }
+  return new Promise((resolve, reject) => {
+    const tabixProcess = spawn('tabix', [filePath, chrom.toString()]);
+    const rl = readline.createInterface({
+      input: tabixProcess.stdout,
+      crlfDelay: Infinity
+    });
+
+    const data = [];
+    let exitCode = null;
+
+    tabixProcess.on('exit', (code) => {
+      exitCode = code;
+    });
+
+    tabixProcess.on('error', (error) => {
+      reject(error);
+    });
+
+    tabixProcess.stderr.on('data', (data) => {
+      console.error(`tabix stderr: ${data}`);
+    });
+
+    rl.on('line', (line) => {
+      const fields = line.split('\t');
+      const pval = parseScientificNotation(fields[COLUMNS.P]);
+      if (pval !== null) {
+        data.push({
+          id: fields[COLUMNS.ID].replace('#ID: ', ''),
+          chr: parseInt(fields[COLUMNS.CHR]),
+          pos: parseInt(fields[COLUMNS.POS]),
+          ref: fields[COLUMNS.REF],
+          alt: fields[COLUMNS.ALT],
+          beta: parseFloat(fields[COLUMNS.BETA]),
+          se: parseFloat(fields[COLUMNS.SE]),
+          p: pval,
+          log10p: parseFloat(fields[COLUMNS.LOG10P]),
+          se_ldsc: parseNA(fields[COLUMNS.SE_LDSC]),
+          p_ldsc: parseScientificNotation(fields[COLUMNS.P_LDSC]),
+          log10p_ldsc: parseNA(fields[COLUMNS.LOG10P_LDSC]),
+          aaf: parseNA(fields[COLUMNS.AAF]),
+          aaf_case: parseNA(fields[COLUMNS.AAF_CASE]),
+          aac: parseNA(fields[COLUMNS.AAC]),
+          aac_case: parseNA(fields[COLUMNS.AAC_CASE]),
+          n: parseNA(fields[COLUMNS.N], parseInt),
+          n_case: parseNA(fields[COLUMNS.N_CASE], parseInt),
+          n_study: parseInt(fields[COLUMNS.N_STUDY]),
+          effect: fields[COLUMNS.EFFECT],
+          p_hetero: parseNA(fields[COLUMNS.P_HETERO])
+        });
+      }
+    });
+
+    rl.on('close', () => {
+      if (exitCode === 0) {
+        resolve(data);
+      } else {
+        reject(new Error(`tabix process exited with code ${exitCode}`));
+      }
+    });
+  });
 }
+
+// async function fetchTabixData(chrom, filePath) {
+//   try {
+//     const { stdout } = await execAsync(`tabix ${filePath} ${chrom}`);
+//     return stdout.split('\n')
+//       .filter(line => line.trim())
+//       .map(line => {
+//         const fields = line.split('\t');
+//         const pval = parseScientificNotation(fields[COLUMNS.P]);
+        
+//         if (pval !== null) {
+//           return {
+//             id: fields[COLUMNS.ID].replace('#ID: ', ''),
+//             chr: parseInt(fields[COLUMNS.CHR]),
+//             pos: parseInt(fields[COLUMNS.POS]),
+//             ref: fields[COLUMNS.REF],
+//             alt: fields[COLUMNS.ALT],
+//             beta: parseFloat(fields[COLUMNS.BETA]),
+//             se: parseFloat(fields[COLUMNS.SE]),
+//             p: pval,
+//             log10p: parseFloat(fields[COLUMNS.LOG10P]),
+//             se_ldsc: parseNA(fields[COLUMNS.SE_LDSC]),
+//             p_ldsc: parseScientificNotation(fields[COLUMNS.P_LDSC]),
+//             log10p_ldsc: parseNA(fields[COLUMNS.LOG10P_LDSC]),
+//             aaf: parseNA(fields[COLUMNS.AAF]),
+//             aaf_case: parseNA(fields[COLUMNS.AAF_CASE]),
+//             aac: parseNA(fields[COLUMNS.AAC]),
+//             aac_case: parseNA(fields[COLUMNS.AAC_CASE]),
+//             n: parseNA(fields[COLUMNS.N], parseInt),
+//             n_case: parseNA(fields[COLUMNS.N_CASE], parseInt),
+//             n_study: parseInt(fields[COLUMNS.N_STUDY]),
+//             effect: fields[COLUMNS.EFFECT],
+//             p_hetero: parseNA(fields[COLUMNS.P_HETERO])
+//           };
+//         }
+//         return null;
+//       })
+//       .filter(result => result !== null);
+//   } catch (error) {
+//     if (error.message.includes('No regions in query')) {
+//       return [];
+//     }
+//     console.error(`Error in fetchTabixData for chromosome ${chrom}: ${error.message}`);
+//     throw error;
+//   }
+// }
 
 /**
  * Checks if a GWAS file exists for the given phenoId, cohort, and study.
@@ -301,52 +367,117 @@ export async function getSearchableGWASMetadata() {
 }
 
 
-export async function getLeadVariants() {
-    try {
-        const content = await fs.readFile(LEAD_MRMEGA_PATH, 'utf-8');
+// export async function getLeadVariants() {
+//     try {
+//         const content = await fs.readFile(LEAD_MRMEGA_PATH, 'utf-8');
         
-        // Parse CSV with proper handling of quoted fields
-        const records = parse(content, {
-            columns: true,
-            skip_empty_lines: true,
-            trim: true
-        });
+//         // Parse CSV with proper handling of quoted fields
+//         const records = parse(content, {
+//             columns: true,
+//             skip_empty_lines: true,
+//             trim: true
+//         });
         
-        return records.map(record => ({
+//         return records.map(record => ({
+//             trait: {
+//                 name: record.Trait || '',
+//                 description: record.Description || '',
+//                 type: record['Trait Type'] || ''  // Added trait type
+//             },
+//             category: record.Category || '',
+//             cohort: record.Population || '',
+//             lead_snp: {
+//                 count: parseInt(record.LEAD_SNP) || 0,
+//                 rsid: record.rsID || '-',
+//                 position: {
+//                     chromosome: record.Chromosome || '',
+//                     position: parseInt(record.Position) || 0,
+//                     from: parseInt(record.From) || 0,    // Added from position
+//                     to: parseInt(record.To) || 0         // Added to position
+//                 },
+//                 reference: record.Reference || '',       // Added reference allele
+//                 alternate: record.Alternate || '',       // Added alternate allele
+//                 log10p: parseFloat(record.Log10P) || 0
+//             },
+//             n_total: parseInt(record.N.replace(/[",]/g, '')),
+//             n_study: parseInt(record['N Study']) || 0,
+//             pop_manifest: record.pop_manifest || '',     // Added population manifest
+//             pop_gwas_page: record.pop_gwas_page || '',  // Added population GWAS page
+//             studies: record.studies || '',              // Added studies
+//             analysis: record.analysis || ''             // Added analysis
+//         }));
+
+//     } catch (error) {
+//         _error(`Error getting lead variants: ${error.message}`);
+//         throw error;
+//     }
+// }
+
+export async function getLeadVariants(req, res) {
+  try {
+    res.setHeader('Content-Type', 'application/json');
+    res.write('['); // Start JSON array
+    let isFirst = true;
+
+    await new Promise((resolve, reject) => {
+      createReadStream(LEAD_MRMEGA_PATH)
+        .pipe(csv())
+        .on('data', (row) => {
+          if (!isFirst) {
+            res.write(',');
+          }
+          isFirst = false;
+
+          const variant = {
             trait: {
-                name: record.Trait || '',
-                description: record.Description || '',
-                type: record['Trait Type'] || ''  // Added trait type
+              name: row.Trait || '',
+              description: row.Description || '',
+              type: row['Trait Type'] || ''
             },
-            category: record.Category || '',
-            cohort: record.Population || '',
+            category: row.Category || '',
+            cohort: row.Population || '',
             lead_snp: {
-                count: parseInt(record.LEAD_SNP) || 0,
-                rsid: record.rsID || '-',
-                position: {
-                    chromosome: record.Chromosome || '',
-                    position: parseInt(record.Position) || 0,
-                    from: parseInt(record.From) || 0,    // Added from position
-                    to: parseInt(record.To) || 0         // Added to position
-                },
-                reference: record.Reference || '',       // Added reference allele
-                alternate: record.Alternate || '',       // Added alternate allele
-                log10p: parseFloat(record.Log10P) || 0
+              count: parseInt(row.LEAD_SNP) || 0,
+              rsid: row.rsID || '-',
+              position: {
+                chromosome: row.Chromosome || '',
+                position: parseInt(row.Position) || 0,
+                from: parseInt(row.From) || 0,
+                to: parseInt(row.To) || 0
+              },
+              reference: row.Reference || '',
+              alternate: row.Alternate || '',
+              log10p: parseFloat(row.Log10P) || 0
             },
-            n_total: parseInt(record.N.replace(/[",]/g, '')),
-            n_study: parseInt(record['N Study']) || 0,
-            pop_manifest: record.pop_manifest || '',     // Added population manifest
-            pop_gwas_page: record.pop_gwas_page || '',  // Added population GWAS page
-            studies: record.studies || '',              // Added studies
-            analysis: record.analysis || ''             // Added analysis
-        }));
+            n_total: parseInt(row.N.replace(/[",]/g, '')),
+            n_study: parseInt(row['N Study']) || 0,
+            pop_manifest: row.pop_manifest || '',
+            pop_gwas_page: row.pop_gwas_page || '',
+            studies: row.studies || '',
+            analysis: row.analysis || ''
+          };
 
-    } catch (error) {
-        _error(`Error getting lead variants: ${error.message}`);
-        throw error;
+          res.write(JSON.stringify(variant));
+        })
+        .on('end', () => {
+          res.write(']');
+          res.end();
+          resolve();
+        })
+        .on('error', (error) => {
+          reject(error);
+        });
+    });
+  } catch (error) {
+    _error(`Error in getLeadVariants controller: ${error.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    } else {
+      res.write(JSON.stringify({ error: error.message }));
+      res.end();
     }
+  }
 }
-
 // export async function queryGWASData(cohort, pheno) {
 //     try {
 //         const gz_file = `${BASE_PREFIX}AGR.${pheno}.${cohort}.GIA_pval_up_to_0.0001.gz`;
