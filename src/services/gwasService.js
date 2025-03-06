@@ -399,7 +399,6 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
   
       const results = {};
       
-      // If no range is specified, determine the data boundaries
       if (minPval === null || maxPval === null) {
         console.log('No p-value range specified, finding global min/max values from data...');
         
@@ -432,9 +431,9 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         if (minPvalFound < 1e-200) {
             // Set minPval to 1e-200 as the threshold
             minPval = 1e-200;
-            // Keep maxPval as the most significant value found
-            maxPval = minPvalFound;
-            console.log(`Very significant p-values detected (< 1e-200). Adjusted range to show from 1e-200 to ${maxPval}`);
+            // Set maxPval to the smallest possible value to include everything more significant
+            maxPval = minPvalFound;  // This ensures we capture everything down to 1e-500
+            console.log(`Very significant p-values detected (< 1e-200). Setting range from 1e-200 to ${maxPval} (most significant)`);
             console.log(`Corresponding to -log10(p) range: ${-Math.log10(minPval)} to ${-Math.log10(maxPval)}`);
         } else if (minPvalFound < 1.0) {
             // Original logic for less significant values
@@ -450,7 +449,6 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         }
       }
       
-      // Rest of the code remains unchanged
       console.log(`Fetching data with p-value range: ${minPval} to ${maxPval}`);
       
       const promises = [];
@@ -458,8 +456,13 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         promises.push(
           fetchTabixData(chrom, filePath)
             .then(chromData => {
+              // Filter based on the p-value range
               const filteredData = chromData.filter(row => {
                 const p = parseFloat(row.p);
+                // If minPval is 1e-200 from our special case, include everything <= 1e-200
+                if (minPval === 1e-200) {
+                  return p <= minPval;  // Changed from >= to <= to include all more significant values
+                }
                 return p >= minPval && p <= maxPval;
               });
   
