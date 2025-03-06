@@ -43,28 +43,73 @@ import {
     }
 }
 
-export async function queryGWASData(req, res) {
-    const { phenoId, cohortId, study } = req.query;
-    if (!phenoId || !cohortId || !study) {
-        return res.status(400).json({ 
-            error: 'phenoId, cohortId, and study are required parameters.' 
-        });
-    }
+// export async function queryGWASData(req, res) {
+//     const { phenoId, cohortId, study } = req.query;
+//     if (!phenoId || !cohortId || !study) {
+//         return res.status(400).json({ 
+//             error: 'phenoId, cohortId, and study are required parameters.' 
+//         });
+//     }
 
-    try {
-        const result = await queryGWASDataService(phenoId, cohortId, study);
+//     try {
+//         const result = await queryGWASDataService(phenoId, cohortId, study);
         
-        if (result.error) {
-            console.error('GWAS Data Error:', result.error);
-            return res.status(result.status).json({ error: result.error });
-        }
+//         if (result.error) {
+//             console.error('GWAS Data Error:', result.error);
+//             return res.status(result.status).json({ error: result.error });
+//         }
 
-        res.json(result.data);
-    } catch (error) {
-        console.error(`Error in queryGWASData controller: ${error.message}`);
-        res.status(500).json({ error: error.message });
+//         res.json(result.data);
+//     } catch (error) {
+//         console.error(`Error in queryGWASData controller: ${error.message}`);
+//         res.status(500).json({ error: error.message });
+//     }
+// }
+
+export async function queryGWASData(req, res) {
+  const { phenoId, cohortId, study } = req.query;
+  if (!phenoId || !cohortId || !study) {
+    return res.status(400).json({ 
+      error: 'phenoId, cohortId, and study are required parameters.' 
+    });
+  }
+
+  try {
+    // Initial validation from service
+    const { error, status, data } = await queryGWASDataService(phenoId, cohortId, study);
+    if (error) {
+      console.error('GWAS Data Error:', error);
+      return res.status(status).json({ error });
     }
+
+    // Stream response
+    res.setHeader('Content-Type', 'application/json');
+    res.write('{"data":{'); // Start JSON object
+
+    let isFirstChrom = true;
+    for (const [chrom, chromData] of Object.entries(data)) {
+      if (chromData.length > 0) {
+        if (!isFirstChrom) {
+          res.write(',');
+        }
+        res.write(`"${chrom}":${JSON.stringify(chromData)}`);
+        isFirstChrom = false;
+      }
+    }
+
+    res.write('}}'); // End JSON object
+    res.end();
+  } catch (error) {
+    console.error(`Error in queryGWASData controller: ${error.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    } else {
+      res.write(JSON.stringify({ error: error.message }));
+      res.end();
+    }
+  }
 }
+
 // export async function queryGWASData(req, res) {
 //     try {
 //         const { cohortId, phenoId } = req.query;

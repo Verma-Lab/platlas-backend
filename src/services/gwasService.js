@@ -50,7 +50,6 @@ function parseNA(value, parser = parseFloat) {
   return parser(value);
 }
 
-
 async function fetchTabixData(chrom, filePath) {
   return new Promise((resolve, reject) => {
     const tabixProcess = spawn('tabix', [filePath, chrom.toString()]);
@@ -60,18 +59,30 @@ async function fetchTabixData(chrom, filePath) {
     });
 
     const data = [];
-    let exitCode = null;
+    let errorOutput = '';
 
-    tabixProcess.on('exit', (code) => {
-      exitCode = code;
-    });
-
-    tabixProcess.on('error', (error) => {
-      reject(error);
-    });
-
+    // Collect stderr for debugging
     tabixProcess.stderr.on('data', (data) => {
-      console.error(`tabix stderr: ${data}`);
+      errorOutput += data.toString();
+      console.error(`tabix stderr for chr ${chrom}: ${data}`);
+    });
+
+    // Handle process errors (e.g., tabix not found)
+    tabixProcess.on('error', (error) => {
+      reject(new Error(`Failed to spawn tabix: ${error.message}`));
+    });
+
+    // Handle process exit
+    tabixProcess.on('exit', (code, signal) => {
+      if (code === null) {
+        console.error(`tabix for chr ${chrom} terminated with signal: ${signal}`);
+        reject(new Error(`tabix process terminated unexpectedly with signal ${signal}. stderr: ${errorOutput || 'none'}`));
+      } else if (code !== 0) {
+        console.error(`tabix for chr ${chrom} exited with code ${code}`);
+        reject(new Error(`tabix exited with code ${code}. stderr: ${errorOutput || 'none'}`));
+      } else {
+        resolve(data);
+      }
     });
 
     rl.on('line', (line) => {
@@ -104,12 +115,8 @@ async function fetchTabixData(chrom, filePath) {
       }
     });
 
-    rl.on('close', () => {
-      if (exitCode === 0) {
-        resolve(data);
-      } else {
-        reject(new Error(`tabix process exited with code ${exitCode}`));
-      }
+    rl.on('error', (error) => {
+      reject(new Error(`Readline error for chr ${chrom}: ${error.message}`));
     });
   });
 }
@@ -185,74 +192,131 @@ export async function findFiles(phenoId, cohort, study) {
 
 // File: src/services/gwasService.js
 
+// export async function queryGWASData(phenoId, cohortId, study) {
+//     try {
+//         // Validate study parameter
+//         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
+//             return { error: 'Invalid study type. Must be "gwama" or "mrmega".', status: 500 };
+//         }
+
+//         // Construct filename with study and pval_up_to_1e-05
+//         const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
+//         const filePath = join(GWAS_FILES_PATH, gz_file);
+
+//         console.log(`Attempting to access file: ${filePath}`);
+
+//         // Verify file existence
+//         try {
+//             await fs.access(filePath);
+//             console.log('File found:', gz_file);
+//         } catch {
+//             return { error: `GWAS data file not found: ${gz_file}`, status: 500 };
+//         }
+
+//         // Verify tabix index
+//         const indexPath = `${filePath}.tbi`;
+//         try {
+//             await fs.access(indexPath);
+//             console.log('Index file found');
+//         } catch {
+//             return { error: `Tabix index not found for file: ${gz_file}`, status: 500 };
+//         }
+
+//         const results = {};
+//         const promises = [];
+
+//         // Process all chromosomes in parallel
+//         for (let chrom = 1; chrom <= 22; chrom++) {
+//             promises.push(
+//                 fetchTabixData(chrom, filePath)
+//                     .then(chromData => {
+//                         if (chromData.length > 0) {
+//                             results[chrom] = chromData;
+//                         }
+//                     })
+//                     .catch(error => {
+//                         console.error(`Error processing chromosome ${chrom}: ${error.message}`);
+//                         results[chrom] = [];
+//                     })
+//             );
+//         }
+
+//         await Promise.all(promises);
+        
+//         // Check if we got any data
+//         const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
+//         if (totalRows === 0) {
+//             return { error: 'No data found in the file', status: 500 };
+//         }
+
+//         console.log(`Processed data for file: ${gz_file}`);
+//         console.log(`Found data for chromosomes: ${Object.keys(results).join(', ')}`);
+//         console.log(`Total Data Rows: ${totalRows}`);
+        
+//         return { data: results, status: 200 };
+//     } catch (error) {
+//         console.error(`Error querying GWAS data: ${error.message}`);
+//         return { error: error.message, status: 500 };
+//     }
+// }
 export async function queryGWASData(phenoId, cohortId, study) {
     try {
-        // Validate study parameter
-        if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
-            return { error: 'Invalid study type. Must be "gwama" or "mrmega".', status: 500 };
-        }
-
-        // Construct filename with study and pval_up_to_1e-05
-        const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
-        const filePath = join(GWAS_FILES_PATH, gz_file);
-
-        console.log(`Attempting to access file: ${filePath}`);
-
-        // Verify file existence
-        try {
-            await fs.access(filePath);
-            console.log('File found:', gz_file);
-        } catch {
-            return { error: `GWAS data file not found: ${gz_file}`, status: 500 };
-        }
-
-        // Verify tabix index
-        const indexPath = `${filePath}.tbi`;
-        try {
-            await fs.access(indexPath);
-            console.log('Index file found');
-        } catch {
-            return { error: `Tabix index not found for file: ${gz_file}`, status: 500 };
-        }
-
-        const results = {};
-        const promises = [];
-
-        // Process all chromosomes in parallel
-        for (let chrom = 1; chrom <= 22; chrom++) {
-            promises.push(
-                fetchTabixData(chrom, filePath)
-                    .then(chromData => {
-                        if (chromData.length > 0) {
-                            results[chrom] = chromData;
-                        }
-                    })
-                    .catch(error => {
-                        console.error(`Error processing chromosome ${chrom}: ${error.message}`);
-                        results[chrom] = [];
-                    })
-            );
-        }
-
-        await Promise.all(promises);
-        
-        // Check if we got any data
-        const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
-        if (totalRows === 0) {
-            return { error: 'No data found in the file', status: 500 };
-        }
-
-        console.log(`Processed data for file: ${gz_file}`);
-        console.log(`Found data for chromosomes: ${Object.keys(results).join(', ')}`);
-        console.log(`Total Data Rows: ${totalRows}`);
-        
-        return { data: results, status: 200 };
+      if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
+        return { error: 'Invalid study type. Must be "gwama" or "mrmega".', status: 500 };
+      }
+  
+      const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
+      const filePath = join(GWAS_FILES_PATH, gz_file);
+  
+      console.log(`Attempting to access file: ${filePath}`);
+      try {
+        await fs.access(filePath);
+        console.log('File found:', gz_file);
+      } catch {
+        return { error: `GWAS data file not found: ${gz_file}`, status: 500 };
+      }
+  
+      const indexPath = `${filePath}.tbi`;
+      try {
+        await fs.access(indexPath);
+        console.log('Index file found');
+      } catch {
+        return { error: `Tabix index not found for file: ${gz_file}`, status: 500 };
+      }
+  
+      const results = {};
+      const promises = [];
+      for (let chrom = 1; chrom <= 22; chrom++) {
+        promises.push(
+          fetchTabixData(chrom, filePath)
+            .then(chromData => {
+              if (chromData.length > 0) {
+                results[chrom] = chromData;
+              }
+            })
+            .catch(error => {
+              console.error(`Error processing chromosome ${chrom}: ${error.message}`);
+              results[chrom] = [];
+            })
+        );
+      }
+  
+      await Promise.all(promises);
+      const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
+      if (totalRows === 0) {
+        return { error: 'No data found in the file', status: 500 };
+      }
+  
+      console.log(`Processed data for file: ${gz_file}`);
+      console.log(`Found data for chromosomes: ${Object.keys(results).join(', ')}`);
+      console.log(`Total Data Rows: ${totalRows}`);
+  
+      return { data: results, status: 200 };
     } catch (error) {
-        console.error(`Error querying GWAS data: ${error.message}`);
-        return { error: error.message, status: 500 };
+      console.error(`Error querying GWAS data: ${error.message}`);
+      return { error: error.message, status: 500 };
     }
-}
-
+  }
 function checkPvalThreshold(pval, threshold) {
     switch (threshold) {
         case '1e-06_to_0.0001':
