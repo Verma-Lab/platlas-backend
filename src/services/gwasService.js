@@ -302,7 +302,9 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             return parseFloat(pStr); // Fallback for non-scientific notation
         };
         
-        console.log("parsevalue", parsePValue)
+        console.log("parsevalue",  parsePValue(minPval.toString()), minPval)
+        console.log("parsevalue",  parsePValue(maxPval.toString()), maxPval)
+
         // Convert minPval and maxPval to usable numbers if provided
         const effectiveMinPval = minPval !== null ? parsePValue(minPval.toString()) : 0;
         const effectiveMaxPval = maxPval !== null ? parsePValue(maxPval.toString()) : 1e-100;
