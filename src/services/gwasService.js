@@ -291,34 +291,32 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         const results = {};
 
         // Custom p-value parsing function
-        const parsePValue = (pStr) => {
-            if (typeof pStr !== 'string') return parseFloat(pStr); // Fallback for non-string input
-            const match = pStr.match(/(\d+\.?\d*)e-(\d+)/i); // e.g., "1e-500" or "1.5e-600"
+        const parsePValueExponent = (pStr) => {
+            if (typeof pStr !== 'string') return -Math.log10(parseFloat(pStr));
+            const match = pStr.match(/(\d+\.?\d*)e-(\d+)/i);
             if (match) {
                 const [, mantissa, exponent] = match;
                 const mantissaNum = parseFloat(mantissa);
-                return mantissaNum * Math.pow(10, -parseInt(exponent));
+                return mantissaNum > 0 ? -Math.log10(mantissaNum) + parseInt(exponent) : parseInt(exponent);
             }
-            return parseFloat(pStr); // Fallback for non-scientific notation
+            return -Math.log10(parseFloat(pStr));
         };
 
         // Convert minPval and maxPval to usable numbers if provided
-        const effectiveMinPval = minPval !== null ? parsePValue(minPval.toString()) : 0;
-        const effectiveMaxPval = maxPval !== null ? parsePValue(maxPval.toString()) : 1e-100;
+        const effectiveMinLogP = minPval !== null ? parsePValueExponent(minPval.toString()) : 0; // Higher logP = more significant
+        const effectiveMaxLogP = maxPval !== null ? parsePValueExponent(maxPval.toString()) : 100;
 
-        console.log(`Fetching data with p-value range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+        console.log(`Fetching data with -log10(p) range: ${effectiveMinLogP} to ${effectiveMaxLogP}`);
 
         const promises = [];
         for (let chrom = 1; chrom <= 22; chrom++) {
             promises.push(
                 fetchTabixData(chrom, filePath)
                     .then(chromData => {
-                        // Filter based on p-value range using string comparison
                         const filteredData = chromData.filter(row => {
-                            const p = parsePValue(row.p); // Parse as string first
-                            return p >= effectiveMinPval && p <= effectiveMaxPval;
+                            const logP = parsePValueExponent(row.p);
+                            return logP >= effectiveMinLogP && logP <= effectiveMaxLogP;
                         });
-
                         if (filteredData.length > 0) {
                             results[chrom] = filteredData;
                         }
@@ -348,11 +346,11 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
 
         return {
             data: results,
-            status: 200,
-            pValueRange: {
-                maxPValue: effectiveMaxPval,
-                minPValue: effectiveMinPval
-            }
+    status: 200,
+    pValueRange: {
+        maxPValue: maxPval !== null ? maxPval : "1e-100", // Return as string
+        minPValue: minPval !== null ? minPval : "0"       // Return as string
+    }
         };
     } catch (error) {
         console.error(`Error querying GWAS data: ${error.message}`);
