@@ -65,33 +65,59 @@ import {
 //         res.status(500).json({ error: error.message });
 //     }
 // }
-
 export async function queryGWASData(req, res) {
     const { phenoId, cohortId, study, minPval, maxPval } = req.query;
-    if (!phenoId || !cohortId || !study || !minPval || !maxPval) {
+    if (!phenoId || !cohortId || !study) {
       return res.status(400).json({ 
-        error: 'phenoId, cohortId, study, minPval, and maxPval are required.' 
+        error: 'phenoId, cohortId, and study are required.' 
       });
     }
   
     try {
-      const { error, status, data } = await queryGWASDataService(phenoId, cohortId, study, parseFloat(minPval), parseFloat(maxPval));
-      if (error) {
-        return res.status(status).json({ error });
+      // Parse p-value range (or pass null for auto-detection)
+      const minPvalParsed = minPval ? parseFloat(minPval) : null;
+      const maxPvalParsed = maxPval ? parseFloat(maxPval) : null;
+      
+      const result = await queryGWASDataService(
+        phenoId, 
+        cohortId, 
+        study, 
+        minPvalParsed, 
+        maxPvalParsed
+      );
+      
+      if (result.error) {
+        return res.status(result.status).json({ 
+          error: result.error,
+          pValueRange: result.pValueRange // Include range even in error cases
+        });
       }
   
+      // Stream the response to handle large datasets
       res.setHeader('Content-Type', 'application/json');
-      res.write('{"data":{');
+      
+      // Start the JSON object and include the p-value range
+      res.write('{');
+      
+      // Always include the p-value range
+      res.write(`"pValueRange":${JSON.stringify(result.pValueRange)},`);
+      
+      // Write the data object
+      res.write('"data":{');
+      
       let isFirstChrom = true;
-      for (const [chrom, chromData] of Object.entries(data)) {
+      for (const [chrom, chromData] of Object.entries(result.data)) {
         if (chromData.length > 0) {
           if (!isFirstChrom) res.write(',');
           res.write(`"${chrom}":${JSON.stringify(chromData)}`);
           isFirstChrom = false;
         }
       }
+      
+      // Close objects
       res.write('}}');
       res.end();
+      
     } catch (error) {
       console.error(`Error in queryGWASData controller: ${error.message}`);
       if (!res.headersSent) {
