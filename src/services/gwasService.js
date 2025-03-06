@@ -361,6 +361,26 @@ const parsePValue = (pStr) => {
                 type: "scientific",
                 mantissa: mantissa,
                 exponent: exponent,
+                // Custom method to check if this value is <= another value
+                isLessThanOrEqual: function(other) {
+                    if (other && typeof other === 'object' && other.type === 'scientific') {
+                        if (this.exponent === other.exponent) {
+                            return this.mantissa <= other.mantissa;
+                        }
+                        return this.exponent >= other.exponent; // Higher exponent = smaller value
+                    }
+                    return true; // Any extreme scientific value is <= regular number
+                },
+                // Custom method to check if this value is >= another value
+                isGreaterThanOrEqual: function(other) {
+                    if (other && typeof other === 'object' && other.type === 'scientific') {
+                        if (this.exponent === other.exponent) {
+                            return this.mantissa >= other.mantissa;
+                        }
+                        return this.exponent <= other.exponent; // Lower exponent = larger value
+                    }
+                    return false; // Any extreme scientific value is not >= regular number
+                },
                 toString: () => `${mantissa}e-${exponent}`
             };
         }
@@ -375,14 +395,12 @@ const parsePValue = (pStr) => {
         console.log("parse pvalue",  parsePValue(minPval.toString()), minPval)
         console.log("parsevalue",  parsePValue(maxPval.toString()), maxPval)
 
-        const parsedMinPval = minPval !== null ? parsePValue(minPval) : 0;
-        const parsedMaxPval = maxPval !== null ? parsePValue(maxPval) : 1e-100;
-        
-        console.log("Parsed min p-value:", typeof parsedMinPval === 'object' ? 
-            parsedMinPval.toString() : parsedMinPval);
-        console.log("Parsed max p-value:", typeof parsedMaxPval === 'object' ? 
-            parsedMaxPval.toString() : parsedMaxPval);
-        
+        // Convert minPval and maxPval to usable numbers if provided
+        const effectiveMinPval = minPval !== null ? parsePValue(minPval.toString()) : 0;
+        const effectiveMaxPval = maxPval !== null ? parsePValue(maxPval.toString()) : 1e-100;
+
+        console.log(`Fetching data with p-value range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+
         const promises = [];
         for (let chrom = 1; chrom <= 22; chrom++) {
             promises.push(
@@ -390,9 +408,34 @@ const parsePValue = (pStr) => {
                     .then(chromData => {
                         // Filter based on p-value range using string comparison
                         const filteredData = chromData.filter(row => {
-                            const rowP = parsePValue(row.p);
-                            return comparePValues(rowP, parsedMinPval, '>=') && 
-                                   comparePValues(rowP, parsedMaxPval, '<=');
+                            const p = parsePValue(row.p.toString());
+                            
+                            // Handle comparison based on the types
+                            if (typeof p === 'object' && p.type === 'scientific') {
+                                if (typeof effectiveMinPval === 'object' && effectiveMinPval.type === 'scientific') {
+                                    if (!p.isGreaterThanOrEqual(effectiveMinPval)) {
+                                        return false;
+                                    }
+                                }
+                                
+                                if (typeof effectiveMaxPval === 'object' && effectiveMaxPval.type === 'scientific') {
+                                    if (!p.isLessThanOrEqual(effectiveMaxPval)) {
+                                        return false;
+                                    }
+                                } else {
+                                    return false; // Scientific p-value is always smaller than regular maxPval
+                                }
+                                
+                                return true;
+                            } else {
+                                // Regular number comparison
+                                if (typeof effectiveMinPval === 'object' && effectiveMinPval.type === 'scientific') {
+                                    // Regular p-value is always greater than scientific minPval
+                                    return p <= effectiveMaxPval;
+                                }
+                                
+                                return p >= effectiveMinPval && p <= effectiveMaxPval;
+                            }
                         });
 
                         if (filteredData.length > 0) {
