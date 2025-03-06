@@ -367,117 +367,52 @@ export async function getSearchableGWASMetadata() {
 }
 
 
-// export async function getLeadVariants() {
-//     try {
-//         const content = await fs.readFile(LEAD_MRMEGA_PATH, 'utf-8');
+export async function getLeadVariants() {
+    try {
+        const content = await fs.readFile(LEAD_MRMEGA_PATH, 'utf-8');
         
-//         // Parse CSV with proper handling of quoted fields
-//         const records = parse(content, {
-//             columns: true,
-//             skip_empty_lines: true,
-//             trim: true
-//         });
-        
-//         return records.map(record => ({
-//             trait: {
-//                 name: record.Trait || '',
-//                 description: record.Description || '',
-//                 type: record['Trait Type'] || ''  // Added trait type
-//             },
-//             category: record.Category || '',
-//             cohort: record.Population || '',
-//             lead_snp: {
-//                 count: parseInt(record.LEAD_SNP) || 0,
-//                 rsid: record.rsID || '-',
-//                 position: {
-//                     chromosome: record.Chromosome || '',
-//                     position: parseInt(record.Position) || 0,
-//                     from: parseInt(record.From) || 0,    // Added from position
-//                     to: parseInt(record.To) || 0         // Added to position
-//                 },
-//                 reference: record.Reference || '',       // Added reference allele
-//                 alternate: record.Alternate || '',       // Added alternate allele
-//                 log10p: parseFloat(record.Log10P) || 0
-//             },
-//             n_total: parseInt(record.N.replace(/[",]/g, '')),
-//             n_study: parseInt(record['N Study']) || 0,
-//             pop_manifest: record.pop_manifest || '',     // Added population manifest
-//             pop_gwas_page: record.pop_gwas_page || '',  // Added population GWAS page
-//             studies: record.studies || '',              // Added studies
-//             analysis: record.analysis || ''             // Added analysis
-//         }));
-
-//     } catch (error) {
-//         _error(`Error getting lead variants: ${error.message}`);
-//         throw error;
-//     }
-// }
-
-export async function getLeadVariants(req, res) {
-  try {
-    res.setHeader('Content-Type', 'application/json');
-    res.write('['); // Start JSON array
-    let isFirst = true;
-
-    await new Promise((resolve, reject) => {
-      createReadStream(LEAD_MRMEGA_PATH)
-        .pipe(csv())
-        .on('data', (row) => {
-          if (!isFirst) {
-            res.write(',');
-          }
-          isFirst = false;
-
-          const variant = {
-            trait: {
-              name: row.Trait || '',
-              description: row.Description || '',
-              type: row['Trait Type'] || ''
-            },
-            category: row.Category || '',
-            cohort: row.Population || '',
-            lead_snp: {
-              count: parseInt(row.LEAD_SNP) || 0,
-              rsid: row.rsID || '-',
-              position: {
-                chromosome: row.Chromosome || '',
-                position: parseInt(row.Position) || 0,
-                from: parseInt(row.From) || 0,
-                to: parseInt(row.To) || 0
-              },
-              reference: row.Reference || '',
-              alternate: row.Alternate || '',
-              log10p: parseFloat(row.Log10P) || 0
-            },
-            n_total: parseInt(row.N.replace(/[",]/g, '')),
-            n_study: parseInt(row['N Study']) || 0,
-            pop_manifest: row.pop_manifest || '',
-            pop_gwas_page: row.pop_gwas_page || '',
-            studies: row.studies || '',
-            analysis: row.analysis || ''
-          };
-
-          res.write(JSON.stringify(variant));
-        })
-        .on('end', () => {
-          res.write(']');
-          res.end();
-          resolve();
-        })
-        .on('error', (error) => {
-          reject(error);
+        // Parse CSV with proper handling of quoted fields
+        const records = parse(content, {
+            columns: true,
+            skip_empty_lines: true,
+            trim: true
         });
-    });
-  } catch (error) {
-    _error(`Error in getLeadVariants controller: ${error.message}`);
-    if (!res.headersSent) {
-      res.status(500).json({ error: error.message });
-    } else {
-      res.write(JSON.stringify({ error: error.message }));
-      res.end();
+        
+        return records.map(record => ({
+            trait: {
+                name: record.Trait || '',
+                description: record.Description || '',
+                type: record['Trait Type'] || ''  // Added trait type
+            },
+            category: record.Category || '',
+            cohort: record.Population || '',
+            lead_snp: {
+                count: parseInt(record.LEAD_SNP) || 0,
+                rsid: record.rsID || '-',
+                position: {
+                    chromosome: record.Chromosome || '',
+                    position: parseInt(record.Position) || 0,
+                    from: parseInt(record.From) || 0,    // Added from position
+                    to: parseInt(record.To) || 0         // Added to position
+                },
+                reference: record.Reference || '',       // Added reference allele
+                alternate: record.Alternate || '',       // Added alternate allele
+                log10p: parseFloat(record.Log10P) || 0
+            },
+            n_total: parseInt(record.N.replace(/[",]/g, '')),
+            n_study: parseInt(record['N Study']) || 0,
+            pop_manifest: record.pop_manifest || '',     // Added population manifest
+            pop_gwas_page: record.pop_gwas_page || '',  // Added population GWAS page
+            studies: record.studies || '',              // Added studies
+            analysis: record.analysis || ''             // Added analysis
+        }));
+
+    } catch (error) {
+        _error(`Error getting lead variants: ${error.message}`);
+        throw error;
     }
-  }
 }
+
 // export async function queryGWASData(cohort, pheno) {
 //     try {
 //         const gz_file = `${BASE_PREFIX}AGR.${pheno}.${cohort}.GIA_pval_up_to_0.0001.gz`;
