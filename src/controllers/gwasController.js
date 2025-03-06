@@ -79,16 +79,16 @@ export async function queryGWASData(req, res) {
       console.log(`P-value range parameters: min=${minPval || 'not specified'}, max=${maxPval || 'not specified'}`);
       
       // Parse p-value range (or pass null for auto-detection)
-      const minPvalParsed = minPval ? parseFloat(minPval) : null;
-      const maxPvalParsed = maxPval ? parseFloat(maxPval) : null;
+    //   const minPvalParsed = minPval ? parseFloat(minPval) : null;
+    //   const maxPvalParsed = maxPval ? parseFloat(maxPval) : null;
       
       // Call the service function
       const result = await queryGWASDataService(
         phenoId, 
         cohortId, 
         study, 
-        minPvalParsed, 
-        maxPvalParsed
+        minPval,  
+        maxPval  
       );
       
       // Handle error cases
