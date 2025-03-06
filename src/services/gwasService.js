@@ -11,7 +11,6 @@ import { loadPhenotypeMapping } from './phenotypeService.js';  // Change to name
 import { parse } from 'csv-parse/sync';
 import { createReadStream } from 'fs';
 import { createGunzip } from 'zlib';
-import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 
 
@@ -49,69 +48,17 @@ function parseNA(value, parser = parseFloat) {
   return parser(value);
 }
 
-// async function fetchTabixData(chrom, filePath) {
-//   try {
-//     const { stdout } = await execAsync(`tabix ${filePath} ${chrom}`);
-//     return stdout.split('\n')
-//       .filter(line => line.trim())
-//       .map(line => {
-//         const fields = line.split('\t');
-//         const pval = parseScientificNotation(fields[COLUMNS.P]);
-        
-//         if (pval !== null) {
-//           return {
-//             id: fields[COLUMNS.ID].replace('#ID: ', ''),
-//             chr: parseInt(fields[COLUMNS.CHR]),
-//             pos: parseInt(fields[COLUMNS.POS]),
-//             ref: fields[COLUMNS.REF],
-//             alt: fields[COLUMNS.ALT],
-//             beta: parseFloat(fields[COLUMNS.BETA]),
-//             se: parseFloat(fields[COLUMNS.SE]),
-//             p: pval,
-//             log10p: parseFloat(fields[COLUMNS.LOG10P]),
-//             se_ldsc: parseNA(fields[COLUMNS.SE_LDSC]),
-//             p_ldsc: parseScientificNotation(fields[COLUMNS.P_LDSC]),
-//             log10p_ldsc: parseNA(fields[COLUMNS.LOG10P_LDSC]),
-//             aaf: parseNA(fields[COLUMNS.AAF]),
-//             aaf_case: parseNA(fields[COLUMNS.AAF_CASE]),
-//             aac: parseNA(fields[COLUMNS.AAC]),
-//             aac_case: parseNA(fields[COLUMNS.AAC_CASE]),
-//             n: parseNA(fields[COLUMNS.N], parseInt),
-//             n_case: parseNA(fields[COLUMNS.N_CASE], parseInt),
-//             n_study: parseInt(fields[COLUMNS.N_STUDY]),
-//             effect: fields[COLUMNS.EFFECT],
-//             p_hetero: parseNA(fields[COLUMNS.P_HETERO])
-//           };
-//         }
-//         return null;
-//       })
-//       .filter(result => result !== null);
-//   } catch (error) {
-//     if (error.message.includes('No regions in query')) {
-//       return [];
-//     }
-//     console.error(`Error in fetchTabixData for chromosome ${chrom}: ${error.message}`);
-//     throw error;
-//   }
-// }
-
 async function fetchTabixData(chrom, filePath) {
-  return new Promise((resolve, reject) => {
-    const results = [];
-    const tabixProcess = spawn('tabix', [filePath, `${chrom}`]);
-
-    const rl = createInterface({
-      input: tabixProcess.stdout,
-      crlfDelay: Infinity,
-    });
-
-    rl.on('line', (line) => {
-      if (line.trim()) {
+  try {
+    const { stdout } = await execAsync(`tabix ${filePath} ${chrom}`);
+    return stdout.split('\n')
+      .filter(line => line.trim())
+      .map(line => {
         const fields = line.split('\t');
         const pval = parseScientificNotation(fields[COLUMNS.P]);
-
+        
         if (pval !== null) {
-          const data = {
+          return {
             id: fields[COLUMNS.ID].replace('#ID: ', ''),
             chr: parseInt(fields[COLUMNS.CHR]),
             pos: parseInt(fields[COLUMNS.POS]),
@@ -132,39 +79,21 @@ async function fetchTabixData(chrom, filePath) {
             n_case: parseNA(fields[COLUMNS.N_CASE], parseInt),
             n_study: parseInt(fields[COLUMNS.N_STUDY]),
             effect: fields[COLUMNS.EFFECT],
-            p_hetero: parseNA(fields[COLUMNS.P_HETERO]),
+            p_hetero: parseNA(fields[COLUMNS.P_HETERO])
           };
-          results.push(data);
         }
-      }
-    });
-
-    rl.on('close', () => {
-      console.log(`Fetched ${results.length} SNPs for chromosome ${chrom}`); // Debug log
-      resolve(results);
-    });
-
-    tabixProcess.stderr.on('data', (data) => {
-      console.error(`Tabix error for chromosome ${chrom}: ${data.toString()}`);
-    });
-
-    tabixProcess.on('error', (error) => {
-      console.error(`Error spawning tabix for chromosome ${chrom}: ${error.message}`);
-      reject(error);
-    });
-
-    tabixProcess.on('exit', (code) => {
-      if (code !== 0) {
-        if (code === 1 && !tabixProcess.stderr.read()) {
-          // No regions in query, return empty array
-          resolve([]);
-        } else {
-          reject(new Error(`Tabix exited with code ${code}`));
-        }
-      }
-    });
-  });
+        return null;
+      })
+      .filter(result => result !== null);
+  } catch (error) {
+    if (error.message.includes('No regions in query')) {
+      return [];
+    }
+    console.error(`Error in fetchTabixData for chromosome ${chrom}: ${error.message}`);
+    throw error;
+  }
 }
+
 /**
  * Checks if a GWAS file exists for the given phenoId, cohort, and study.
  * @param {string} phenoId - Phenotype ID
