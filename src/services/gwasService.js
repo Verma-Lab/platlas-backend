@@ -427,43 +427,37 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         console.log(`Found p-value range: ${minPvalFound} to ${maxPvalFound}`);
         console.log(`Corresponding to -log10(p) range: ${minLog10p} to ${maxLog10p}`);
         
-        // NEW LOGIC: Adjust range when very significant p-values are found
+        // Adjust range when very significant p-values are found
         if (minPvalFound < 1e-200) {
-            // Set minPval to 1e-200 as the threshold
             minPval = 1e-200;
-            // Do NOT set maxPval here—leave it null to indicate no upper limit
-            maxPval = null;  // This will be handled in the filtering logic
-            console.log(`Very significant p-values detected (< 1e-200). Setting range from 1e-200 to most significant (no upper limit)`);
+            maxPval = minPvalFound;  // Set to smallest found value for frontend
+            console.log(`Very significant p-values detected (< 1e-200). Setting range from 1e-200 to ${maxPval} (filtering all <= 1e-200)`);
             console.log(`Corresponding to -log10(p) range: 200 to ${maxLog10p}`);
         } else if (minPvalFound < 1.0) {
-            // Original logic for less significant values
             minPval = minPvalFound;
             maxPval = Math.min(minPvalFound * 10, maxPvalFound);
             console.log(`Setting initial view to p-value range: ${minPval} to ${maxPval}`);
             console.log(`Corresponding to -log10(p) range: ${-Math.log10(maxPval)} to ${-Math.log10(minPval)}`);
         } else {
-            // Fallback
             maxPval = 1e-6;
             minPval = 1e-5;
             console.log(`No valid p-values found, using default range: ${minPval} to ${maxPval}`);
         }
       }
       
-      console.log(`Fetching data with p-value range: ${minPval} to ${maxPval || 'no upper limit'}`);
+      console.log(`Fetching data with p-value range: ${minPval} to ${maxPval} (filtering <= ${minPval} if significant)`);
       
       const promises = [];
       for (let chrom = 1; chrom <= 22; chrom++) {
         promises.push(
           fetchTabixData(chrom, filePath)
             .then(chromData => {
-              // Filter based on the p-value range
               const filteredData = chromData.filter(row => {
                 const p = parseFloat(row.p);
-                // If minPval is 1e-200 and maxPval is null, include everything <= 1e-200
-                if (minPval === 1e-200 && maxPval === null) {
-                  return p <= minPval;  // No upper limit, just everything more significant than 1e-200
+                // If minPval is 1e-200, include everything <= 1e-200, ignoring maxPval
+                if (minPval === 1e-200) {
+                  return p <= minPval;  // No upper limit in filter
                 }
-                // Otherwise, use the standard range filter
                 return p >= minPval && p <= maxPval;
               });
   
@@ -481,7 +475,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
       await Promise.all(promises);
   
       const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
-      console.log(`Returning ${totalRows} data points for p-value range: ${minPval} to ${maxPval || 'most significant value'}`);
+      console.log(`Returning ${totalRows} data points for p-value range: ${minPval} to ${maxPval}`);
       
       if (totalRows === 0) {
         return { 
