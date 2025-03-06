@@ -310,22 +310,23 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         // And min p-value to be one order of magnitude less significant
         
         // If we found valid p-values
-        if (minPvalFound < 1.0) {
-          // Default to smallest found p-value for max (most significant)
-          maxPval = minPvalFound;
-          
-          // For min value, go one order of magnitude less significant
-          // This effectively gives us a slice of the most significant SNPs
-          minPval = Math.min(maxPval * 10, maxPvalFound);
-          
-          console.log(`Setting initial view to p-value range: ${minPval} to ${maxPval}`);
-          console.log(`Corresponding to -log10(p) range: ${-Math.log10(maxPval)} to ${-Math.log10(minPval)}`);
-        } else {
-          // If no valid p-values found, use default range
-          maxPval = 1e-8;
-          minPval = 1e-7;
-          console.log(`No valid p-values found, using default range: ${minPval} to ${maxPval}`);
-        }
+// In the queryGWASData function, within the section where the initial range is set:
+
+if (minPvalFound < 1.0) {
+    // Set minPval to the smallest p-value found (most significant)
+    minPval = minPvalFound;
+    
+    // Set maxPval to one order of magnitude less significant (larger p-value)
+    maxPval = Math.min(minPval * 10, maxPvalFound);
+    
+    console.log(`Setting initial view to p-value range: ${minPval} to ${maxPval}`);
+    console.log(`Corresponding to -log10(p) range: ${-Math.log10(maxPval)} to ${-Math.log10(minPval)}`);
+  } else {
+    // Fallback if no valid p-values are found
+    maxPval = 1e-6;
+    minPval = 1e-5;
+    console.log(`No valid p-values found, using default range: ${minPval} to ${maxPval}`);
+  }
       }
       
       // Now fetch actual data within the determined range
