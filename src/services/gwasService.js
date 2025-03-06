@@ -278,7 +278,6 @@ export async function findFiles(phenoId, cohort, study) {
 // }
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
-    
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
             return { error: 'Invalid study type.', status: 500 };
         }
@@ -292,22 +291,22 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         const results = {};
 
         // Custom p-value parsing function
-        const parsePValueExponent = (pStr) => {
-            if (typeof pStr !== 'string') return -Math.log10(parseFloat(pStr));
-            const match = pStr.match(/(\d+\.?\d*)e-(\d+)/i);
+        const parsePValue = (pStr) => {
+            if (typeof pStr !== 'string') return parseFloat(pStr); // Fallback for non-string input
+            const match = pStr.match(/(\d+\.?\d*)e-(\d+)/i); // e.g., "1e-500" or "1.5e-600"
             if (match) {
                 const [, mantissa, exponent] = match;
                 const mantissaNum = parseFloat(mantissa);
-                return mantissaNum > 0 ? -Math.log10(mantissaNum) + parseInt(exponent) : parseInt(exponent);
+                return mantissaNum * Math.pow(10, -parseInt(exponent));
             }
-            return -Math.log10(parseFloat(pStr));
+            return parseFloat(pStr); // Fallback for non-scientific notation
         };
 
         // Convert minPval and maxPval to usable numbers if provided
-        const effectiveMinLogP = minPval !== null ? parsePValueExponent(minPval.toString()) : 0; // Higher logP = more significant
-        const effectiveMaxLogP = maxPval !== null ? parsePValueExponent(maxPval.toString()) : 100;
+        const effectiveMinPval = minPval !== null ? parsePValue(minPval.toString()) : 0;
+        const effectiveMaxPval = maxPval !== null ? parsePValue(maxPval.toString()) : 1e-100;
 
-        console.log(`Fetching data with -log10(p) range: ${effectiveMinLogP} to ${effectiveMaxLogP}`);
+        console.log(`Fetching data with p-value range: ${effectiveMinPval} to ${effectiveMaxPval}`);
 
         const promises = [];
         for (let chrom = 1; chrom <= 22; chrom++) {
