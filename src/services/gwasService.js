@@ -537,6 +537,9 @@ const comparePValues = (p1, p2, operator) => {
 //         return { error: error.message, status: 500 };
 //     }
 // }
+const fs = require('fs').promises; // Ensure fs.promises is imported
+const join = require('path').join; // Assuming you're using path.join
+
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
@@ -563,7 +566,6 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
                 fetchTabixData(chrom, filePath)
                     .then(chromData => {
                         if (chromData.length > 0) {
-                            // Log sample data for debugging
                             if (chrom === 1) {
                                 console.log(`Sample data from chromosome ${chrom}:`, 
                                     chromData.slice(0, 3).map(row => ({ 
@@ -574,15 +576,18 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
                                 );
                             }
 
-                            // Filter directly using log10p field (no recomputation)
+                            // Filter directly using log10p field
                             const filteredData = chromData.filter(row => {
-                                const log10p = parseFloat(row.log10p) || 0; // Ensure it's a number
+                                const log10p = parseFloat(row.log10p) || 0;
                                 return log10p >= effectiveMinPval && 
                                        (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval);
                             });
 
                             if (filteredData.length > 0) {
                                 console.log(`Chromosome ${chrom}: Found ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
+                                // Log max -log10(p) for this chromosome
+                                const maxLog10p = Math.max(...filteredData.map(row => parseFloat(row.log10p) || 0));
+                                console.log(`Chromosome ${chrom}: Max -log10(p) in filtered data = ${maxLog10p}`);
                                 results[chrom] = filteredData;
                             }
                         }
@@ -610,11 +615,30 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             };
         }
 
-        // Prepare data for frontend (no recomputation, just pass log10p as-is)
+        // Export filtered data to CSV
+        const csvLines = ['chrom,id,p,log10p']; // CSV header
+        Object.entries(results).forEach(([chrom, chromData]) => {
+            chromData.forEach(row => {
+                const log10p = parseFloat(row.log10p) || 0;
+                csvLines.push(`${chrom},${row.id},${row.p},${log10p}`);
+            });
+        });
+
+        const csvContent = csvLines.join('\n');
+        const csvFilePath = join(GWAS_FILES_PATH, `${phenoId}.${cohortId}.${study}_filtered_results.csv`);
+        await fs.writeFile(csvFilePath, csvContent, 'utf8');
+        console.log(`Filtered results saved to: ${csvFilePath}`);
+
+        // Calculate and log the overall max -log10(p) in the final results
+        const allLog10pValues = Object.values(results).flat().map(row => parseFloat(row.log10p) || 0);
+        const maxLog10pOverall = Math.max(...allLog10pValues);
+        console.log(`Maximum -log10(p) in final results: ${maxLog10pOverall}`);
+
+        // Prepare data for frontend
         Object.values(results).forEach(chromData => {
             chromData.forEach(row => {
-                row.log10p = parseFloat(row.log10p) || 0; // Ensure it's a number
-                row.p_for_display = row.p; // Keep original p-value string for display
+                row.log10p = parseFloat(row.log10p) || 0;
+                row.p_for_display = row.p;
             });
         });
 
