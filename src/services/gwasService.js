@@ -475,9 +475,34 @@ Object.values(results).forEach(chromData => {
 });
 console.log('PVALUES', allPValues)
 if (allPValues.length > 0) {
-    const minP = Math.min(...allPValues.filter(p => typeof p === 'number'));
-    const maxLog10P = -Math.log10(minP);
-    console.log(`Smallest p-value in dataset: ${minP} (-log10(p) = ${maxLog10P})`);
+    // Group by type
+    const numberPValues = allPValues.filter(p => typeof p === 'number' && p > 0);
+    const scientificPValues = allPValues.filter(p => typeof p === 'string' && /\d+(\.\d+)?e-\d+/i.test(p));
+    
+    // Find smallest regular p-value
+    if (numberPValues.length > 0) {
+        const minP = Math.min(...numberPValues);
+        const maxLog10P = -Math.log10(minP);
+        console.log(`Smallest numeric p-value: ${minP} (-log10(p) = ${maxLog10P})`);
+    }
+    
+    // Find smallest scientific notation p-value
+    if (scientificPValues.length > 0) {
+        const sorted = [...scientificPValues].sort((a, b) => {
+            const [, mantA, expA] = a.match(/(\d+(?:\.\d+)?)e-(\d+)/i);
+            const [, mantB, expB] = b.match(/(\d+(?:\.\d+)?)e-(\d+)/i);
+            
+            const expNumA = parseInt(expA);
+            const expNumB = parseInt(expB);
+            
+            if (expNumA === expNumB) {
+                return parseFloat(mantA) - parseFloat(mantB);
+            }
+            return expNumB - expNumA; // Higher exponent = smaller value
+        });
+        
+        console.log(`Smallest scientific p-value: ${sorted[0]}`);
+    }
 }
         const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
         console.log(`Returning ${totalRows} data points for p-value range: ${effectiveMinPval} to ${effectiveMaxPval}`);
