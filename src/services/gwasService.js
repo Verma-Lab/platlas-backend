@@ -41,15 +41,20 @@ const COLUMNS = {
 };
 
 function parseScientificNotation(value) {
-    if (value === 'NA' || value === '') return null;
-    
-    // Check if value is in scientific notation with large negative exponent
-    const match = value.match(/^(\d+\.?\d*)e-(\d+)$/i);
-    if (match && parseInt(match[2]) > 308) {
-      // Return the original string for extremely small values
-      return value;
+    if (value === 'NA' || value === '' || value === null || value === undefined) return null;
+  
+    // Check if value is in scientific notation with a large negative exponent
+    const match = String(value).match(/^(\d+\.?\d*)e-(\d+)$/i);
+    if (match) {
+      const exponent = parseInt(match[2]);
+      if (exponent > 308) {
+        // Return the original string for extremely small values to preserve precision
+        return String(value).toLowerCase(); // Ensure consistent format (e.g., "5.55e-445")
+      }
+      return parseFloat(value); // Safe to parse as a number if within JS limits
     }
-    
+  
+    // Handle non-scientific notation values
     return parseFloat(value);
   }
 
@@ -287,53 +292,57 @@ export async function findFiles(phenoId, cohort, study) {
 // }
 // Helper function to compare p-values, including string representations
 const comparePValues = (p1, p2, operator) => {
-    // If p1 is our special object type
-    if (p1 && typeof p1 === 'object' && p1.type === 'scientific') {
-        // If p2 is also our special object type
-        if (p2 && typeof p2 === 'object' && p2.type === 'scientific') {
-            // Compare exponents first (higher exponent = smaller value)
-            if (p1.exponent !== p2.exponent) {
-                if (operator === '<') return p1.exponent > p2.exponent;
-                if (operator === '<=') return p1.exponent >= p2.exponent;
-                if (operator === '>') return p1.exponent < p2.exponent;
-                if (operator === '>=') return p1.exponent <= p2.exponent;
-                if (operator === '===') return p1.exponent === p2.exponent && p1.mantissa === p2.mantissa;
-            }
-            // If exponents are equal, compare mantissas
-            if (operator === '<') return p1.mantissa < p2.mantissa;
-            if (operator === '<=') return p1.mantissa <= p2.mantissa;
-            if (operator === '>') return p1.mantissa > p2.mantissa;
-            if (operator === '>=') return p1.mantissa >= p2.mantissa;
-            if (operator === '===') return p1.mantissa === p2.mantissa;
-        }
-        // p1 is scientific but p2 is a regular number
-        // Any number in scientific notation with exponent > 308 is smaller than regular numbers
-        if (operator === '<') return true;  // p1 < p2
-        if (operator === '<=') return true; // p1 <= p2
-        if (operator === '>') return false; // p1 > p2
-        if (operator === '>=') return false; // p1 >= p2
-        if (operator === '===') return false; // p1 === p2
+    // Handle null or invalid cases
+    if (p1 === null || p2 === null) {
+      if (operator === '===') return p1 === p2;
+      return false;
     }
-    
-    // If p2 is our special object type but p1 is not
-    if (p2 && typeof p2 === 'object' && p2.type === 'scientific') {
-        // Any number in scientific notation with exponent > 308 is smaller than regular numbers
-        if (operator === '<') return false; // p1 < p2
-        if (operator === '<=') return false; // p1 <= p2
-        if (operator === '>') return true;  // p1 > p2
-        if (operator === '>=') return true; // p1 >= p2
-        if (operator === '===') return false; // p1 === p2
+  
+    // If both are strings (extremely small p-values)
+    if (typeof p1 === 'string' && typeof p2 === 'string') {
+      const exp1 = parseInt(p1.match(/e-(\d+)/i)?.[1] || 0);
+      const exp2 = parseInt(p2.match(/e-(\d+)/i)?.[1] || 0);
+      const mant1 = parseFloat(p1.match(/^(\d+\.?\d*)/)?.[1] || 1);
+      const mant2 = parseFloat(p2.match(/^(\d+\.?\d*)/)?.[1] || 1);
+  
+      if (exp1 === exp2) {
+        if (operator === '<') return mant1 < mant2;
+        if (operator === '<=') return mant1 <= mant2;
+        if (operator === '>') return mant1 > mant2;
+        if (operator === '>=') return mant1 >= mant2;
+        if (operator === '===') return mant1 === mant2;
+      }
+      // Higher exponent means smaller p-value
+      if (operator === '<') return exp1 > exp2;
+      if (operator === '<=') return exp1 >= exp2;
+      if (operator === '>') return exp1 < exp2;
+      if (operator === '>=') return exp1 <= exp2;
+      if (operator === '===') return exp1 === exp2 && mant1 === mant2;
     }
-    
-    // Both are regular numbers
+  
+    // If p1 is a string (extremely small) and p2 is a number
+    if (typeof p1 === 'string') {
+      if (operator === '<' || operator === '<=') return true; // String p-value is smaller
+      if (operator === '>' || operator === '>=') return false;
+      if (operator === '===') return false;
+    }
+  
+    // If p2 is a string (extremely small) and p1 is a number
+    if (typeof p2 === 'string') {
+      if (operator === '<' || operator === '<=') return false; // Number is larger
+      if (operator === '>' || operator === '>=') return true;
+      if (operator === '===') return false;
+    }
+  
+    // Both are numbers
     if (operator === '<') return p1 < p2;
     if (operator === '<=') return p1 <= p2;
     if (operator === '>') return p1 > p2;
     if (operator === '>=') return p1 >= p2;
     if (operator === '===') return p1 === p2;
-    
-    return false; // Default case
-};
+  
+    return false;
+  };
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
@@ -416,87 +425,109 @@ console.log("parsevalue", parsePValue(safeToString(maxPval)), maxPval);
         console.log(`Fetching data with p-value range: ${effectiveMinPval} to ${effectiveMaxPval}`);
 
         const promises = [];
+        // for (let chrom = 1; chrom <= 22; chrom++) {
+        //     promises.push(
+        //         fetchTabixData(chrom, filePath)
+        //             .then(chromData => {
+        //                 if (chrom === 1) {
+        //                     console.log(`Sample data from chromosome ${chrom}:`, 
+        //                         chromData.slice(0, 3).map(row => ({ 
+        //                             id: row.id, 
+        //                             p: row.p, 
+        //                             log10p: row.log10p 
+        //                         }))
+        //                     );
+        //                 }
+        //                 if (chromData.length > 0) {
+        //                     // Find smallest p-value in this chromosome
+        //                     const minP = chromData.reduce((min, row) => {
+        //                         const p = parseFloat(row.p);
+        //                         return p > 0 && p < min ? p : min;
+        //                     }, Number.MAX_VALUE);
+                            
+        //                     const maxLog10P = -Math.log10(minP);
+        //                     console.log(`Chromosome ${chrom}: Smallest p-value = ${minP.toExponential(2)} (-log10(p) = ${maxLog10P.toFixed(2)})`);
+                            
+        //                     // Also check for any extremely small p-values that might be stored directly as log10p
+        //                     const maxLog10PFromField = Math.max(...chromData.map(row => parseFloat(row.log10p) || 0));
+        //                     if (maxLog10PFromField > maxLog10P) {
+        //                         console.log(`Chromosome ${chrom}: Largest -log10(p) from field = ${maxLog10PFromField.toFixed(2)}`);
+        //                     }
+        //                 }
+        //                 // Filter based on p-value range using string comparison
+        //                 const filteredData = chromData.filter(row => {
+        //                     const p = parsePValue(row.p.toString());
+                            
+        //                     let pGreaterThanMin = false;
+        //                     let pLessThanMax = false;
+                            
+        //                     if (typeof p === 'object' && p.type === 'scientific') {
+        //                         // Check minPval
+        //                         if (typeof effectiveMinPval === 'number') {
+        //                             // Scientific p ~ 0, so p >= minPval if minPval <= 0
+        //                             pGreaterThanMin = effectiveMinPval <= 0;
+        //                         } else if (typeof effectiveMinPval === 'object' && effectiveMinPval.type === 'scientific') {
+        //                             pGreaterThanMin = p.isGreaterThanOrEqual(effectiveMinPval);
+        //                         }
+                                
+        //                         // Check maxPval
+        //                         if (typeof effectiveMaxPval === 'number') {
+        //                             // Scientific p ~ 0, so p <= maxPval if maxPval >= 0
+        //                             pLessThanMax = effectiveMaxPval >= 0;
+        //                         } else if (typeof effectiveMaxPval === 'object' && effectiveMaxPval.type === 'scientific') {
+        //                             pLessThanMax = p.isLessThanOrEqual(effectiveMaxPval);
+        //                         }
+        //                     } else {
+        //                         // p is a number
+        //                         if (typeof effectiveMinPval === 'number') {
+        //                             pGreaterThanMin = p >= effectiveMinPval;
+        //                         } else if (typeof effectiveMinPval === 'object' && effectiveMinPval.type === 'scientific') {
+        //                             pGreaterThanMin = true; // Number > 0 > scientific p
+        //                         }
+                                
+        //                         if (typeof effectiveMaxPval === 'number') {
+        //                             pLessThanMax = p <= effectiveMaxPval;
+        //                         } else if (typeof effectiveMaxPval === 'object' && effectiveMaxPval.type === 'scientific') {
+        //                             pLessThanMax = false; // Number > scientific maxPval
+        //                         }
+        //                     }
+                            
+        //                     return pGreaterThanMin && pLessThanMax;
+        //                 });
+
+        //                 if (filteredData.length > 0) {
+        //                     results[chrom] = filteredData;
+        //                 }
+        //             })
+        //             .catch(error => {
+        //                 console.error(`Error processing chromosome ${chrom}: ${error.message}`);
+        //                 results[chrom] = [];
+        //             })
+        //     );
+        // }
         for (let chrom = 1; chrom <= 22; chrom++) {
             promises.push(
-                fetchTabixData(chrom, filePath)
-                    .then(chromData => {
-                        if (chrom === 1) {
-                            console.log(`Sample data from chromosome ${chrom}:`, 
-                                chromData.slice(0, 3).map(row => ({ 
-                                    id: row.id, 
-                                    p: row.p, 
-                                    log10p: row.log10p 
-                                }))
-                            );
-                        }
-                        if (chromData.length > 0) {
-                            // Find smallest p-value in this chromosome
-                            const minP = chromData.reduce((min, row) => {
-                                const p = parseFloat(row.p);
-                                return p > 0 && p < min ? p : min;
-                            }, Number.MAX_VALUE);
-                            
-                            const maxLog10P = -Math.log10(minP);
-                            console.log(`Chromosome ${chrom}: Smallest p-value = ${minP.toExponential(2)} (-log10(p) = ${maxLog10P.toFixed(2)})`);
-                            
-                            // Also check for any extremely small p-values that might be stored directly as log10p
-                            const maxLog10PFromField = Math.max(...chromData.map(row => parseFloat(row.log10p) || 0));
-                            if (maxLog10PFromField > maxLog10P) {
-                                console.log(`Chromosome ${chrom}: Largest -log10(p) from field = ${maxLog10PFromField.toFixed(2)}`);
-                            }
-                        }
-                        // Filter based on p-value range using string comparison
-                        const filteredData = chromData.filter(row => {
-                            const p = parsePValue(row.p.toString());
-                            
-                            let pGreaterThanMin = false;
-                            let pLessThanMax = false;
-                            
-                            if (typeof p === 'object' && p.type === 'scientific') {
-                                // Check minPval
-                                if (typeof effectiveMinPval === 'number') {
-                                    // Scientific p ~ 0, so p >= minPval if minPval <= 0
-                                    pGreaterThanMin = effectiveMinPval <= 0;
-                                } else if (typeof effectiveMinPval === 'object' && effectiveMinPval.type === 'scientific') {
-                                    pGreaterThanMin = p.isGreaterThanOrEqual(effectiveMinPval);
-                                }
-                                
-                                // Check maxPval
-                                if (typeof effectiveMaxPval === 'number') {
-                                    // Scientific p ~ 0, so p <= maxPval if maxPval >= 0
-                                    pLessThanMax = effectiveMaxPval >= 0;
-                                } else if (typeof effectiveMaxPval === 'object' && effectiveMaxPval.type === 'scientific') {
-                                    pLessThanMax = p.isLessThanOrEqual(effectiveMaxPval);
-                                }
-                            } else {
-                                // p is a number
-                                if (typeof effectiveMinPval === 'number') {
-                                    pGreaterThanMin = p >= effectiveMinPval;
-                                } else if (typeof effectiveMinPval === 'object' && effectiveMinPval.type === 'scientific') {
-                                    pGreaterThanMin = true; // Number > 0 > scientific p
-                                }
-                                
-                                if (typeof effectiveMaxPval === 'number') {
-                                    pLessThanMax = p <= effectiveMaxPval;
-                                } else if (typeof effectiveMaxPval === 'object' && effectiveMaxPval.type === 'scientific') {
-                                    pLessThanMax = false; // Number > scientific maxPval
-                                }
-                            }
-                            
-                            return pGreaterThanMin && pLessThanMax;
-                        });
-
-                        if (filteredData.length > 0) {
-                            results[chrom] = filteredData;
-                        }
-                    })
-                    .catch(error => {
-                        console.error(`Error processing chromosome ${chrom}: ${error.message}`);
-                        results[chrom] = [];
-                    })
+              fetchTabixData(chrom, filePath)
+                .then(chromData => {
+                  // Filter based on p-value range using comparePValues
+                  const filteredData = chromData.filter(row => {
+                    const p = row.p; // Could be number or string
+                    const greaterThanMin = comparePValues(p, effectiveMinPval, '>=');
+                    const lessThanMax = comparePValues(p, effectiveMaxPval, '<=');
+                    return greaterThanMin && lessThanMax;
+                  });
+      
+                  if (filteredData.length > 0) {
+                    console.log(`Chromosome ${chrom}: Filtered to ${filteredData.length} points`);
+                    results[chrom] = filteredData;
+                  }
+                })
+                .catch(error => {
+                  console.error(`Error processing chromosome ${chrom}: ${error.message}`);
+                  results[chrom] = [];
+                })
             );
-        }
-
+          }
         // Add this after processing all chromosomes
         await Promise.all(promises);
 
