@@ -392,12 +392,17 @@ const parsePValue = (pStr) => {
     return parseFloat(pValStr);
 };
         
-        console.log("parse pvalue",  parsePValue(minPval.toString()), minPval)
-        console.log("parsevalue",  parsePValue(maxPval.toString()), maxPval)
+const safeToString = (val) => {
+    if (val === null || val === undefined) return '';
+    return String(val);
+};
+
+console.log("parse pvalue", parsePValue(safeToString(minPval)), minPval);
+console.log("parsevalue", parsePValue(safeToString(maxPval)), maxPval);
 
         // Convert minPval and maxPval to usable numbers if provided
-        const effectiveMinPval = minPval !== null ? parsePValue(minPval.toString()) : 0;
-        const effectiveMaxPval = maxPval !== null ? parsePValue(maxPval.toString()) : 1e-100;
+        const effectiveMinPval = minPval !== null ? parsePValue(safeToString(minPval)) : 0;
+        const effectiveMaxPval = maxPval !== null ? parsePValue(safeToString(maxPval)) : 1e-100;
 
         console.log(`Fetching data with p-value range: ${effectiveMinPval} to ${effectiveMaxPval}`);
 
@@ -449,6 +454,19 @@ const parsePValue = (pStr) => {
             );
         }
 
+        // Add this after processing all chromosomes
+const allPValues = [];
+Object.values(results).forEach(chromData => {
+    chromData.forEach(row => {
+        allPValues.push(row.p);
+    });
+});
+
+if (allPValues.length > 0) {
+    const minP = Math.min(...allPValues.filter(p => typeof p === 'number'));
+    const maxLog10P = -Math.log10(minP);
+    console.log(`Smallest p-value in dataset: ${minP} (-log10(p) = ${maxLog10P})`);
+}
         await Promise.all(promises);
 
         const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
