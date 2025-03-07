@@ -359,8 +359,8 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
 
         // Custom p-value parsing function that preserves string representations for extreme values
         const parsePValue = (pStr) => {
-            if (pStr === null || pStr === undefined) return 0;
-            const pValStr = String(pStr);
+            if (pStr === null || pStr === undefined) return null;
+            const pValStr = String(pStr).toLowerCase();
             const match = pValStr.match(/^(\d+\.?\d*)e-(\d+)$/i);
             if (match) {
                 const mantissa = parseFloat(match[1]);
@@ -371,22 +371,30 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
                         mantissa: mantissa,
                         exponent: exponent,
                         isLessThanOrEqual: function(other) {
-                            if (other && typeof other === 'object' && other.type === 'scientific') {
+                            if (other === null) return true; // No upper bound
+                            if (typeof other === 'number') {
+                                return true; // Any scientific value with exponent > 308 is smaller than any JS number
+                            }
+                            if (other.type === 'scientific') {
                                 if (this.exponent === other.exponent) {
                                     return this.mantissa <= other.mantissa;
                                 }
-                                return this.exponent >= other.exponent;
+                                return this.exponent >= other.exponent; // Higher exponent = smaller value
                             }
-                            return true; // Scientific p-value is smaller than any number
+                            return false; // Shouldn't happen with valid input
                         },
                         isGreaterThanOrEqual: function(other) {
-                            if (other && typeof other === 'object' && other.type === 'scientific') {
+                            if (other === null) return false; // No lower bound comparison
+                            if (typeof other === 'number') {
+                                return other <= 0; // Scientific value only >= 0 or negative numbers
+                            }
+                            if (other.type === 'scientific') {
                                 if (this.exponent === other.exponent) {
                                     return this.mantissa >= other.mantissa;
                                 }
-                                return this.exponent <= other.exponent;
+                                return this.exponent <= other.exponent; // Lower exponent = larger value
                             }
-                            return false; // Scientific p-value is smaller than any number
+                            return false;
                         },
                         toString: () => `${mantissa}e-${exponent}`
                     };
@@ -401,11 +409,11 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             return String(val);
         };
 
-        // Set default range to include all significant p-values if not specified
+        // Set default range with 1e-100 threshold as per your requirement
         const effectiveMinPval = minPval !== null ? parsePValue(safeToString(minPval)) : 0;
-        const effectiveMaxPval = maxPval !== null ? parsePValue(safeToString(maxPval)) : null; // No upper bound by default
+        const effectiveMaxPval = maxPval !== null ? parsePValue(safeToString(maxPval)) : parsePValue('1e-100');
 
-        console.log(`Fetching data with p-value range: ${effectiveMinPval} to ${effectiveMaxPval || 'no upper limit'}`);
+        console.log(`Fetching data with p-value range: ${effectiveMinPval} to ${effectiveMaxPval.toString()}`);
 
         const promises = [];
         for (let chrom = 1; chrom <= 22; chrom++) {
@@ -438,35 +446,22 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
                         const filteredData = chromData.filter(row => {
                             const p = parsePValue(row.p.toString());
                             let pGreaterThanMin = false;
-                            let pLessThanMax = true; // Default to true if no maxPval
+                            let pLessThanMax = false;
 
+                            // Handle minPval comparison
                             if (typeof p === 'object' && p.type === 'scientific') {
-                                if (typeof effectiveMinPval === 'number') {
-                                    pGreaterThanMin = effectiveMinPval <= 0;
-                                } else if (typeof effectiveMinPval === 'object' && effectiveMinPval.type === 'scientific') {
-                                    pGreaterThanMin = p.isGreaterThanOrEqual(effectiveMinPval);
-                                }
-                                if (effectiveMaxPval !== null) {
-                                    if (typeof effectiveMaxPval === 'number') {
-                                        pLessThanMax = effectiveMaxPval >= 0;
-                                    } else if (typeof effectiveMaxPval === 'object' && effectiveMaxPval.type === 'scientific') {
-                                        pLessThanMax = p.isLessThanOrEqual(effectiveMaxPval);
-                                    }
-                                }
+                                pGreaterThanMin = effectiveMinPval === null || p.isGreaterThanOrEqual(effectiveMinPval);
                             } else {
-                                if (typeof effectiveMinPval === 'number') {
-                                    pGreaterThanMin = p >= effectiveMinPval;
-                                } else if (typeof effectiveMinPval === 'object' && effectiveMinPval.type === 'scientific') {
-                                    pGreaterThanMin = true; // Number > scientific p
-                                }
-                                if (effectiveMaxPval !== null) {
-                                    if (typeof effectiveMaxPval === 'number') {
-                                        pLessThanMax = p <= effectiveMaxPval;
-                                    } else if (typeof effectiveMaxPval === 'object' && effectiveMaxPval.type === 'scientific') {
-                                        pLessThanMax = false; // Number > scientific maxPval
-                                    }
-                                }
+                                pGreaterThanMin = effectiveMinPval === null || p >= effectiveMinPval;
                             }
+
+                            // Handle maxPval comparison
+                            if (typeof p === 'object' && p.type === 'scientific') {
+                                pLessThanMax = effectiveMaxPval === null || p.isLessThanOrEqual(effectiveMaxPval);
+                            } else {
+                                pLessThanMax = effectiveMaxPval === null || p <= effectiveMaxPval;
+                            }
+
                             return pGreaterThanMin && pLessThanMax;
                         });
 
@@ -508,7 +503,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         }
 
         const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
-        console.log(`Returning ${totalRows} data points in p-value range: ${effectiveMinPval} to ${effectiveMaxPval || 'no upper limit'}`);
+        console.log(`Returning ${totalRows} data points in p-value range: ${effectiveMinPval} to ${effectiveMaxPval.toString()}`);
 
         if (totalRows === 0) {
             return {
