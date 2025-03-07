@@ -411,6 +411,15 @@ console.log("parsevalue", parsePValue(safeToString(maxPval)), maxPval);
             promises.push(
                 fetchTabixData(chrom, filePath)
                     .then(chromData => {
+                        if (chrom === 1) {
+                            console.log(`Sample data from chromosome ${chrom}:`, 
+                                chromData.slice(0, 3).map(row => ({ 
+                                    id: row.id, 
+                                    p: row.p, 
+                                    log10p: row.log10p 
+                                }))
+                            );
+                        }
                         // Filter based on p-value range using string comparison
                         const filteredData = chromData.filter(row => {
                             const p = parsePValue(row.p.toString());
@@ -455,7 +464,10 @@ console.log("parsevalue", parsePValue(safeToString(maxPval)), maxPval);
         }
 
         // Add this after processing all chromosomes
-const allPValues = [];
+        await Promise.all(promises);
+
+
+        const allPValues = [];
 Object.values(results).forEach(chromData => {
     chromData.forEach(row => {
         allPValues.push(row.p);
@@ -467,8 +479,6 @@ if (allPValues.length > 0) {
     const maxLog10P = -Math.log10(minP);
     console.log(`Smallest p-value in dataset: ${minP} (-log10(p) = ${maxLog10P})`);
 }
-        await Promise.all(promises);
-
         const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
         console.log(`Returning ${totalRows} data points for p-value range: ${effectiveMinPval} to ${effectiveMaxPval}`);
 
