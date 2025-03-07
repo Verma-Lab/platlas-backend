@@ -461,7 +461,7 @@ Object.values(results).forEach(chromData => {
         allPValues.push(row.p);
     });
 });
-
+console.log('PVALUES', allPValues)
 if (allPValues.length > 0) {
     const minP = Math.min(...allPValues.filter(p => typeof p === 'number'));
     const maxLog10P = -Math.log10(minP);
