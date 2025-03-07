@@ -14,7 +14,7 @@ import { createGunzip } from 'zlib';
 import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 import readline from 'readline';
-
+import { TabixIndexedFile } from '@gmod/tabix';
 
 const COLUMNS = {
   ID: 0,
@@ -537,9 +537,6 @@ const comparePValues = (p1, p2, operator) => {
 //         return { error: error.message, status: 500 };
 //     }
 // }
-const fs = require('fs').promises; // Ensure fs.promises is imported
-const join = require('path').join; // Assuming you're using path.join
-
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
@@ -548,61 +545,64 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
 
         const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
         const filePath = join(GWAS_FILES_PATH, gz_file);
+        const tbiPath = `${filePath}.tbi`;
 
+        // Verify file existence
         await fs.access(filePath);
-        await fs.access(`${filePath}.tbi`);
+        await fs.access(tbiPath);
 
-        const results = {};
+        // Initialize TabixIndexedFile
+        const tabixIndexedFile = new TabixIndexedFile({
+            path: filePath,
+            tbiPath: tbiPath
+        });
 
-        // Default minPval to 100 (-log10(p) >= 100) if not provided
-        const effectiveMinPval = minPval !== null ? parseFloat(minPval) : 100;
+        // Set effective -log10(p) range
+        const effectiveMinPval = minPval !== null ? parseFloat(minPval) : 100; // Default to 100
         const effectiveMaxPval = maxPval !== null ? parseFloat(maxPval) : Infinity;
 
-        console.log(`Fetching data with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+        console.log(`Querying Tabix with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
 
-        const promises = [];
+        const results = {};
+        let totalRows = 0;
+
+        // Query all chromosomes (1-22)
         for (let chrom = 1; chrom <= 22; chrom++) {
-            promises.push(
-                fetchTabixData(chrom, filePath)
-                    .then(chromData => {
-                        if (chromData.length > 0) {
-                            if (chrom === 1) {
-                                console.log(`Sample data from chromosome ${chrom}:`, 
-                                    chromData.slice(0, 3).map(row => ({ 
-                                        id: row.id, 
-                                        p: row.p, 
-                                        log10p: row.log10p 
-                                    }))
-                                );
-                            }
+            const chromStr = chrom.toString();
+            console.log(`Processing chromosome ${chromStr}`);
 
-                            // Filter directly using log10p field
-                            const filteredData = chromData.filter(row => {
-                                const log10p = parseFloat(row.log10p) || 0;
-                                return log10p >= effectiveMinPval && 
-                                       (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval);
-                            });
+            // Use getLines to fetch all lines for this chromosome
+            const lines = tabixIndexedFile.getLines(chromStr, 0, Infinity, {
+                // Optional: Define a parser if the default tab-split doesn’t work
+                parser: line => line.split('\t')
+            });
 
-                            if (filteredData.length > 0) {
-                                console.log(`Chromosome ${chrom}: Found ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
-                                // Log max -log10(p) for this chromosome
-                                const maxLog10p = Math.max(...filteredData.map(row => parseFloat(row.log10p) || 0));
-                                console.log(`Chromosome ${chrom}: Max -log10(p) in filtered data = ${maxLog10p}`);
-                                results[chrom] = filteredData;
-                            }
-                        }
-                    })
-                    .catch(error => {
-                        console.error(`Error processing chromosome ${chrom}: ${error.message}`);
-                        results[chrom] = [];
-                    })
-            );
+            const filteredData = [];
+            for await (const line of lines) {
+                // Assuming columns: id, chrom, pos, ref, alt, beta, se, pval, log10p, ...
+                const log10p = parseFloat(line[8]); // 9th column (index 8) is -log10(p)
+                if (isNaN(log10p)) {
+                    console.warn(`Invalid -log10(p) in line: ${line.join('\t')}`);
+                    continue;
+                }
+
+                // Filter based on -log10(p) range
+                if (log10p >= effectiveMinPval && (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval)) {
+                    filteredData.push({
+                        id: line[0],
+                        pos: parseInt(line[2]),
+                        p: line[7], // Original p-value string
+                        log10p: log10p
+                    });
+                }
+            }
+
+            if (filteredData.length > 0) {
+                results[chromStr] = filteredData;
+                totalRows += filteredData.length;
+                console.log(`Chromosome ${chromStr}: ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
+            }
         }
-
-        await Promise.all(promises);
-
-        const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
-        console.log(`Returning ${totalRows} data points with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
 
         if (totalRows === 0) {
             return {
@@ -615,32 +615,22 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             };
         }
 
-        // Export filtered data to CSV
-        const csvLines = ['chrom,id,p,log10p']; // CSV header
+        // Log max -log10(p) across all results
+        const allLog10pValues = Object.values(results).flat().map(row => row.log10p);
+        const maxLog10pOverall = Math.max(...allLog10pValues);
+        console.log(`Maximum -log10(p) in results: ${maxLog10pOverall}`);
+
+        // Export to CSV for debugging (optional)
+        const csvLines = ['chrom,id,p,log10p'];
         Object.entries(results).forEach(([chrom, chromData]) => {
             chromData.forEach(row => {
-                const log10p = parseFloat(row.log10p) || 0;
-                csvLines.push(`${chrom},${row.id},${row.p},${log10p}`);
+                csvLines.push(`${chrom},${row.id},${row.p},${row.log10p}`);
             });
         });
-
         const csvContent = csvLines.join('\n');
         const csvFilePath = join(GWAS_FILES_PATH, `${phenoId}.${cohortId}.${study}_filtered_results.csv`);
         await fs.writeFile(csvFilePath, csvContent, 'utf8');
         console.log(`Filtered results saved to: ${csvFilePath}`);
-
-        // Calculate and log the overall max -log10(p) in the final results
-        const allLog10pValues = Object.values(results).flat().map(row => parseFloat(row.log10p) || 0);
-        const maxLog10pOverall = Math.max(...allLog10pValues);
-        console.log(`Maximum -log10(p) in final results: ${maxLog10pOverall}`);
-
-        // Prepare data for frontend
-        Object.values(results).forEach(chromData => {
-            chromData.forEach(row => {
-                row.log10p = parseFloat(row.log10p) || 0;
-                row.p_for_display = row.p;
-            });
-        });
 
         return {
             data: results,
@@ -651,7 +641,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             }
         };
     } catch (error) {
-        console.error(`Error querying GWAS data: ${error.message}`);
+        console.error(`Error querying GWAS data with Tabix: ${error.message}`);
         return { error: error.message, status: 500 };
     }
 }
