@@ -340,7 +340,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             return { error: 'Invalid study type.', status: 500 };
         }
 
-        const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
+        const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_0.1.gz`;
         const filePath = join(GWAS_FILES_PATH, gz_file);
 
         await fs.access(filePath);
