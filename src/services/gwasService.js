@@ -420,6 +420,22 @@ console.log("parsevalue", parsePValue(safeToString(maxPval)), maxPval);
                                 }))
                             );
                         }
+                        if (chromData.length > 0) {
+                            // Find smallest p-value in this chromosome
+                            const minP = chromData.reduce((min, row) => {
+                                const p = parseFloat(row.p);
+                                return p > 0 && p < min ? p : min;
+                            }, Number.MAX_VALUE);
+                            
+                            const maxLog10P = -Math.log10(minP);
+                            console.log(`Chromosome ${chrom}: Smallest p-value = ${minP.toExponential(2)} (-log10(p) = ${maxLog10P.toFixed(2)})`);
+                            
+                            // Also check for any extremely small p-values that might be stored directly as log10p
+                            const maxLog10PFromField = Math.max(...chromData.map(row => parseFloat(row.log10p) || 0));
+                            if (maxLog10PFromField > maxLog10P) {
+                                console.log(`Chromosome ${chrom}: Largest -log10(p) from field = ${maxLog10PFromField.toFixed(2)}`);
+                            }
+                        }
                         // Filter based on p-value range using string comparison
                         const filteredData = chromData.filter(row => {
                             const p = parsePValue(row.p.toString());
