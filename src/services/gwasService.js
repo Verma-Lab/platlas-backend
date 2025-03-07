@@ -370,28 +370,25 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
                         type: "scientific",
                         mantissa: mantissa,
                         exponent: exponent,
+                        log10p: -Math.log10(mantissa) + exponent, // Precompute exact -log10(p)
                         isLessThanOrEqual: function(other) {
-                            if (other === null) return true; // No upper bound
+                            if (other === null) return true;
                             if (typeof other === 'number') {
-                                return true; // Any scientific value with exponent > 308 is smaller than any JS number
+                                return other >= 0 ? true : false; // Positive numbers are larger than any p-value
                             }
                             if (other.type === 'scientific') {
-                                if (this.exponent === other.exponent) {
-                                    return this.mantissa <= other.mantissa;
-                                }
+                                if (this.exponent === other.exponent) return this.mantissa <= other.mantissa;
                                 return this.exponent >= other.exponent; // Higher exponent = smaller value
                             }
-                            return false; // Shouldn't happen with valid input
+                            return false;
                         },
                         isGreaterThanOrEqual: function(other) {
-                            if (other === null) return false; // No lower bound comparison
+                            if (other === null) return false;
                             if (typeof other === 'number') {
-                                return other <= 0; // Scientific value only >= 0 or negative numbers
+                                return other <= 0 ? true : false; // Only true if other is 0 or negative
                             }
                             if (other.type === 'scientific') {
-                                if (this.exponent === other.exponent) {
-                                    return this.mantissa >= other.mantissa;
-                                }
+                                if (this.exponent === other.exponent) return this.mantissa >= other.mantissa;
                                 return this.exponent <= other.exponent; // Lower exponent = larger value
                             }
                             return false;
@@ -399,7 +396,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
                         toString: () => `${mantissa}e-${exponent}`
                     };
                 }
-                return mantissa * Math.pow(10, -exponent);
+                return parseFloat(pValStr);
             }
             return parseFloat(pValStr);
         };
@@ -447,21 +444,15 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
                             const p = parsePValue(row.p.toString());
                             let pGreaterThanMin = false;
                             let pLessThanMax = false;
-
-                            // Handle minPval comparison
+                        
                             if (typeof p === 'object' && p.type === 'scientific') {
                                 pGreaterThanMin = effectiveMinPval === null || p.isGreaterThanOrEqual(effectiveMinPval);
-                            } else {
-                                pGreaterThanMin = effectiveMinPval === null || p >= effectiveMinPval;
-                            }
-
-                            // Handle maxPval comparison
-                            if (typeof p === 'object' && p.type === 'scientific') {
                                 pLessThanMax = effectiveMaxPval === null || p.isLessThanOrEqual(effectiveMaxPval);
                             } else {
-                                pLessThanMax = effectiveMaxPval === null || p <= effectiveMaxPval;
+                                pGreaterThanMin = effectiveMinPval === null || comparePValues(p, effectiveMinPval, '>=');
+                                pLessThanMax = effectiveMaxPval === null || comparePValues(p, effectiveMaxPval, '<=');
                             }
-
+                        
                             return pGreaterThanMin && pLessThanMax;
                         });
 
@@ -519,12 +510,17 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         // Prepare data for frontend
         Object.values(results).forEach(chromData => {
             chromData.forEach(row => {
-                if (typeof row.p === 'string' && row.p.match(/e-\d+/i)) {
-                    const match = row.p.match(/e-(\d+)/i);
-                    const exponent = parseInt(match[1]);
-                    row.log10p = row.log10p || exponent; // Use existing log10p or approximate
+                if (typeof row.p === 'object' && row.p.type === 'scientific') {
+                    row.log10p = row.log10p || row.p.log10p; // Use precomputed log10p
+                    row.p_for_display = row.p.toString();
+                } else if (typeof row.p === 'string' && row.p.match(/e-\d+/i)) {
+                    const parsed = parsePValue(row.p);
+                    row.log10p = row.log10p || (typeof parsed === 'object' ? parsed.log10p : -Math.log10(parsed));
+                    row.p_for_display = row.p;
+                } else {
+                    row.p_for_display = row.p.toExponential();
+                    row.log10p = row.log10p || -Math.log10(row.p);
                 }
-                row.p_for_display = typeof row.p === 'string' ? row.p : row.p.toExponential();
             });
         });
 
