@@ -1,5 +1,5 @@
 // File: src/services/gwasService.js
-// import { promises as fs } from 'fs';
+import { promises as fs } from 'fs';
 import { join } from 'path';
 import { gunzipSync } from 'zlib';
 import { promisify } from 'util';
