@@ -553,44 +553,73 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
 
         const results = {};
 
-        // Default minPval to 100 if not provided, keep maxPval as Infinity if not provided
-        const effectiveMinPval = minPval !== null ? minPval : 100;
-        const effectiveMaxPval = maxPval !== null ? maxPval : Infinity;
-
-        console.log(`Fetching data with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
-
-        const promises = [];
+        // Step 1: Load all data first to find appropriate default values
+        const allChromData = {};
+        let globalMaxLog10p = 0;
+        
+        // First pass: collect data and find maximum log10p
+        const dataPromises = [];
         for (let chrom = 1; chrom <= 22; chrom++) {
-            promises.push(
+            dataPromises.push(
                 fetchTabixData(chrom, filePath)
                     .then(chromData => {
                         if (chromData.length > 0) {
+                            allChromData[chrom] = chromData;
+                            
                             // Find max -log10p for this chromosome
                             const maxLog10p = chromData.reduce((max, row) => 
                                 Math.max(max, Number(row.log10p) || 0), 0);
+                            
+                            globalMaxLog10p = Math.max(globalMaxLog10p, maxLog10p);
                             console.log(`Chromosome ${chrom}: Max -log10(p) found = ${maxLog10p}`);
-
-                            // Filter directly using log10p field
-                            const filteredData = chromData.filter(row => {
-                                const log10p = Number(row.log10p) || 0;
-                                return log10p >= effectiveMinPval && 
-                                       (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval);
-                            });
-
-                            if (filteredData.length > 0) {
-                                console.log(`Chromosome ${chrom}: Found ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
-                                results[chrom] = filteredData;
-                            }
                         }
                     })
                     .catch(error => {
                         console.error(`Error processing chromosome ${chrom}: ${error.message}`);
-                        results[chrom] = [];
+                        allChromData[chrom] = [];
                     })
             );
         }
+        
+        await Promise.all(dataPromises);
+        
+        // Determine appropriate defaults based on the data
+        let effectiveMinPval;
+        if (minPval !== null) {
+            effectiveMinPval = minPval;
+        } else {
+            // Adaptive default based on data
+            if (globalMaxLog10p >= 100) {
+                effectiveMinPval = 100; // Use 100 for datasets with very significant values
+            } else if (globalMaxLog10p >= 20) {
+                effectiveMinPval = 20;  // Use 20 for moderately significant datasets
+            } else if (globalMaxLog10p >= 8) {
+                effectiveMinPval = 8;   // Genome-wide significance threshold
+            } else {
+                effectiveMinPval = 5;   // Minimum meaningful threshold
+            }
+        }
+        
+        const effectiveMaxPval = maxPval !== null ? maxPval : Infinity;
 
-        await Promise.all(promises);
+        console.log(`Fetching data with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+        
+        // Second pass: filter data based on determined thresholds
+        for (let chrom = 1; chrom <= 22; chrom++) {
+            const chromData = allChromData[chrom] || [];
+            
+            // Filter directly using log10p field
+            const filteredData = chromData.filter(row => {
+                const log10p = Number(row.log10p) || 0;
+                return log10p >= effectiveMinPval && 
+                       (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval);
+            });
+
+            if (filteredData.length > 0) {
+                console.log(`Chromosome ${chrom}: Found ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
+                results[chrom] = filteredData;
+            }
+        }
 
         const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
         console.log(`Returning ${totalRows} data points with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
