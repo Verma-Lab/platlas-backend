@@ -588,10 +588,20 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         if (minPval !== null) {
             effectiveMinPval = minPval;
         } else {
+            if (globalMaxLog10p >= 400) {
+                effectiveMinPval = 400; // Use 100 for datasets with very significant values
+            }
+            else if (globalMaxLog10p >= 300) {
+                effectiveMinPval = 300; // Use 100 for datasets with very significant values
+            }
             // Adaptive default based on data
-            if (globalMaxLog10p >= 100) {
+            else if (globalMaxLog10p >= 200) {
+                effectiveMinPval = 200; // Use 100 for datasets with very significant values
+            } 
+            else if (globalMaxLog10p >= 100) {
                 effectiveMinPval = 100; // Use 100 for datasets with very significant values
-            } else if (globalMaxLog10p >= 20) {
+            }
+            else if (globalMaxLog10p >= 20) {
                 effectiveMinPval = 20;  // Use 20 for moderately significant datasets
             } else if (globalMaxLog10p >= 8) {
                 effectiveMinPval = 8;   // Genome-wide significance threshold
