@@ -14,7 +14,8 @@ import { createGunzip } from 'zlib';
 import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 import readline from 'readline';
-import { TabixIndexedFile } from '@gmod/tabix';
+import pkg from '@gmod/tabix';
+const { TabixIndexedFile } = pkg;
 
 const COLUMNS = {
   ID: 0,
