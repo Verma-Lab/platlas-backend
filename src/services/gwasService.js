@@ -538,18 +538,21 @@ const comparePValues = (p1, p2, operator) => {
 //         return { error: error.message, status: 500 };
 //     }
 // }
+
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
+            console.error(`Invalid study type: ${study}`);
             return { error: 'Invalid study type.', status: 500 };
         }
 
-        const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
+        const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`; // Ensure this matches your file
         const filePath = join(GWAS_FILES_PATH, gz_file);
         const tbiPath = `${filePath}.tbi`;
 
-        // Verify file existence
+        console.log(`Checking file existence at: ${filePath}`);
         await fs.access(filePath);
+        console.log(`Checking index existence at: ${tbiPath}`);
         await fs.access(tbiPath);
 
         // Initialize TabixIndexedFile
@@ -572,31 +575,26 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             const chromStr = chrom.toString();
             console.log(`Processing chromosome ${chromStr}`);
 
-            // Use getLines to fetch all lines for this chromosome
-            const lines = tabixIndexedFile.getLines(chromStr, 0, Infinity, {
-                // Optional: Define a parser if the default tab-split doesn’t work
-                parser: line => line.split('\t')
+            // Fetch all lines for this chromosome
+            const lines = await tabixIndexedFile.getLines(chromStr, 0, Infinity, {
+                parser: line => line.split('\t') // Parse tab-delimited lines
             });
 
-            const filteredData = [];
-            for await (const line of lines) {
-                // Assuming columns: id, chrom, pos, ref, alt, beta, se, pval, log10p, ...
-                const log10p = parseFloat(line[8]); // 9th column (index 8) is -log10(p)
-                if (isNaN(log10p)) {
-                    console.warn(`Invalid -log10(p) in line: ${line.join('\t')}`);
-                    continue;
-                }
-
-                // Filter based on -log10(p) range
-                if (log10p >= effectiveMinPval && (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval)) {
-                    filteredData.push({
+            const filteredData = lines
+                .map(line => {
+                    const log10p = parseFloat(line[8]); // 9th column (index 8) is -log10(p)
+                    if (isNaN(log10p)) {
+                        console.warn(`Invalid -log10(p) in line: ${line.join('\t')}`);
+                        return null;
+                    }
+                    return {
                         id: line[0],
                         pos: parseInt(line[2]),
                         p: line[7], // Original p-value string
                         log10p: log10p
-                    });
-                }
-            }
+                    };
+                })
+                .filter(row => row && row.log10p >= effectiveMinPval && (effectiveMaxPval === Infinity || row.log10p <= effectiveMaxPval));
 
             if (filteredData.length > 0) {
                 results[chromStr] = filteredData;
@@ -606,6 +604,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         }
 
         if (totalRows === 0) {
+            console.warn('No data found in the specified -log10(p) range');
             return {
                 error: 'No data found in the specified -log10(p) range',
                 status: 404,
@@ -616,12 +615,12 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             };
         }
 
-        // Log max -log10(p) across all results
+        // Calculate max -log10(p)
         const allLog10pValues = Object.values(results).flat().map(row => row.log10p);
         const maxLog10pOverall = Math.max(...allLog10pValues);
         console.log(`Maximum -log10(p) in results: ${maxLog10pOverall}`);
 
-        // Export to CSV for debugging (optional)
+        // Export to CSV for debugging
         const csvLines = ['chrom,id,p,log10p'];
         Object.entries(results).forEach(([chrom, chromData]) => {
             chromData.forEach(row => {
@@ -637,7 +636,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             data: results,
             status: 200,
             pValueRange: {
-                maxLog10P: effectiveMaxPval,
+                maxLog10P: maxLog10pOverall,
                 minLog10P: effectiveMinPval
             }
         };
@@ -646,6 +645,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         return { error: error.message, status: 500 };
     }
 }
+
 function checkPvalThreshold(pval, threshold) {
     switch (threshold) {
         case '1e-06_to_0.0001':
