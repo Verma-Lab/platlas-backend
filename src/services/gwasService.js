@@ -546,7 +546,7 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             return { error: 'Invalid study type.', status: 500 };
         }
 
-        const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`; // Ensure this matches your file
+        const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
         const filePath = join(GWAS_FILES_PATH, gz_file);
         const tbiPath = `${filePath}.tbi`;
 
@@ -555,42 +555,51 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         console.log(`Checking index existence at: ${tbiPath}`);
         await fs.access(tbiPath);
 
-        // Initialize TabixIndexedFile
         const tabixIndexedFile = new TabixIndexedFile({
             path: filePath,
             tbiPath: tbiPath
         });
 
-        // Set effective -log10(p) range
-        const effectiveMinPval = minPval !== null ? parseFloat(minPval) : 100; // Default to 100
-        const effectiveMaxPval = maxPval !== null ? parseFloat(maxPval) : Infinity;
+        // Adjust minPval and maxPval to -log10(p) values if they’re p-values
+        const effectiveMinPval = minPval !== null ? (minPval < 1 ? -Math.log10(parseFloat(minPval)) : parseFloat(minPval)) : 100;
+        const effectiveMaxPval = maxPval !== null ? (maxPval < 1 ? -Math.log10(parseFloat(maxPval)) : parseFloat(maxPval)) : Infinity;
 
         console.log(`Querying Tabix with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
 
         const results = {};
         let totalRows = 0;
 
-        // Query all chromosomes (1-22)
         for (let chrom = 1; chrom <= 22; chrom++) {
             const chromStr = chrom.toString();
             console.log(`Processing chromosome ${chromStr}`);
 
-            // Fetch all lines for this chromosome
-            const lines = await tabixIndexedFile.getLines(chromStr, 0, Infinity, {
-                parser: line => line.split('\t') // Parse tab-delimited lines
-            });
+            // Fetch lines without custom parser
+            let lines;
+            try {
+                lines = await tabixIndexedFile.getLines(chromStr, 0, Infinity);
+                console.log(`Raw lines for chromosome ${chromStr}:`, lines ? lines.slice(0, 3) : 'No lines returned');
+            } catch (err) {
+                console.warn(`No data for chromosome ${chromStr}: ${err.message}`);
+                continue; // Skip this chromosome if no data
+            }
+
+            if (!lines || !Array.isArray(lines)) {
+                console.warn(`No valid lines returned for chromosome ${chromStr}`);
+                continue;
+            }
 
             const filteredData = lines
                 .map(line => {
-                    const log10p = parseFloat(line[8]); // 9th column (index 8) is -log10(p)
+                    const columns = line.split('\t');
+                    const log10p = parseFloat(columns[8]); // 9th column is -log10(p)
                     if (isNaN(log10p)) {
-                        console.warn(`Invalid -log10(p) in line: ${line.join('\t')}`);
+                        console.warn(`Invalid -log10(p) in line: ${line}`);
                         return null;
                     }
                     return {
-                        id: line[0],
-                        pos: parseInt(line[2]),
-                        p: line[7], // Original p-value string
+                        id: columns[0],
+                        pos: parseInt(columns[2]),
+                        p: columns[7], // Original p-value
                         log10p: log10p
                     };
                 })
@@ -615,12 +624,10 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             };
         }
 
-        // Calculate max -log10(p)
         const allLog10pValues = Object.values(results).flat().map(row => row.log10p);
         const maxLog10pOverall = Math.max(...allLog10pValues);
         console.log(`Maximum -log10(p) in results: ${maxLog10pOverall}`);
 
-        // Export to CSV for debugging
         const csvLines = ['chrom,id,p,log10p'];
         Object.entries(results).forEach(([chrom, chromData]) => {
             chromData.forEach(row => {
