@@ -14,8 +14,7 @@ import { createGunzip } from 'zlib';
 import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 import readline from 'readline';
-import pkg from '@gmod/tabix';
-const { TabixIndexedFile } = pkg;
+
 
 const COLUMNS = {
   ID: 0,
@@ -539,81 +538,64 @@ const comparePValues = (p1, p2, operator) => {
 //     }
 // }
 
+
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
-            console.error(`Invalid study type: ${study}`);
             return { error: 'Invalid study type.', status: 500 };
         }
 
         const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
         const filePath = join(GWAS_FILES_PATH, gz_file);
-        const tbiPath = `${filePath}.tbi`;
 
-        console.log(`Checking file existence at: ${filePath}`);
         await fs.access(filePath);
-        console.log(`Checking index existence at: ${tbiPath}`);
-        await fs.access(tbiPath);
-
-        const tabixIndexedFile = new TabixIndexedFile({
-            path: filePath,
-            tbiPath: tbiPath
-        });
-
-        // Adjust minPval and maxPval to -log10(p) values if they’re p-values
-        const effectiveMinPval = minPval !== null ? (minPval < 1 ? -Math.log10(parseFloat(minPval)) : parseFloat(minPval)) : 100;
-        const effectiveMaxPval = maxPval !== null ? (maxPval < 1 ? -Math.log10(parseFloat(maxPval)) : parseFloat(maxPval)) : Infinity;
-
-        console.log(`Querying Tabix with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+        await fs.access(`${filePath}.tbi`);
 
         const results = {};
-        let totalRows = 0;
 
+        // Default minPval to 100 if not provided, keep maxPval as Infinity if not provided
+        const effectiveMinPval = minPval !== null ? minPval : 100;
+        const effectiveMaxPval = maxPval !== null ? maxPval : Infinity;
+
+        console.log(`Fetching data with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+
+        const promises = [];
         for (let chrom = 1; chrom <= 22; chrom++) {
-            const chromStr = chrom.toString();
-            console.log(`Processing chromosome ${chromStr}`);
+            promises.push(
+                fetchTabixData(chrom, filePath)
+                    .then(chromData => {
+                        if (chromData.length > 0) {
+                            // Find max -log10p for this chromosome
+                            const maxLog10p = chromData.reduce((max, row) => 
+                                Math.max(max, Number(row.log10p) || 0), 0);
+                            console.log(`Chromosome ${chrom}: Max -log10(p) found = ${maxLog10p}`);
 
-            // Fetch lines without custom parser
-            let lines;
-            try {
-                lines = await tabixIndexedFile.getLines(chromStr, 0, Infinity);
-                console.log(`Raw lines for chromosome ${chromStr}:`, lines ? lines.slice(0, 3) : 'No lines returned');
-            } catch (err) {
-                console.warn(`No data for chromosome ${chromStr}: ${err.message}`);
-                continue; // Skip this chromosome if no data
-            }
+                            // Filter directly using log10p field
+                            const filteredData = chromData.filter(row => {
+                                const log10p = Number(row.log10p) || 0;
+                                return log10p >= effectiveMinPval && 
+                                       (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval);
+                            });
 
-            if (!lines || !Array.isArray(lines)) {
-                console.warn(`No valid lines returned for chromosome ${chromStr}`);
-                continue;
-            }
-
-            const filteredData = lines
-                .map(line => {
-                    const columns = line.split('\t');
-                    const log10p = parseFloat(columns[8]); // 9th column is -log10(p)
-                    if (isNaN(log10p)) {
-                        console.warn(`Invalid -log10(p) in line: ${line}`);
-                        return null;
-                    }
-                    return {
-                        id: columns[0],
-                        pos: parseInt(columns[2]),
-                        p: columns[7], // Original p-value
-                        log10p: log10p
-                    };
-                })
-                .filter(row => row && row.log10p >= effectiveMinPval && (effectiveMaxPval === Infinity || row.log10p <= effectiveMaxPval));
-
-            if (filteredData.length > 0) {
-                results[chromStr] = filteredData;
-                totalRows += filteredData.length;
-                console.log(`Chromosome ${chromStr}: ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
-            }
+                            if (filteredData.length > 0) {
+                                console.log(`Chromosome ${chrom}: Found ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
+                                results[chrom] = filteredData;
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error(`Error processing chromosome ${chrom}: ${error.message}`);
+                        results[chrom] = [];
+                    })
+            );
         }
 
+        await Promise.all(promises);
+
+        const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
+        console.log(`Returning ${totalRows} data points with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+
         if (totalRows === 0) {
-            console.warn('No data found in the specified -log10(p) range');
             return {
                 error: 'No data found in the specified -log10(p) range',
                 status: 404,
@@ -624,35 +606,113 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
             };
         }
 
-        const allLog10pValues = Object.values(results).flat().map(row => row.log10p);
-        const maxLog10pOverall = Math.max(...allLog10pValues);
-        console.log(`Maximum -log10(p) in results: ${maxLog10pOverall}`);
-
-        const csvLines = ['chrom,id,p,log10p'];
-        Object.entries(results).forEach(([chrom, chromData]) => {
-            chromData.forEach(row => {
-                csvLines.push(`${chrom},${row.id},${row.p},${row.log10p}`);
-            });
-        });
-        const csvContent = csvLines.join('\n');
-        const csvFilePath = join(GWAS_FILES_PATH, `${phenoId}.${cohortId}.${study}_filtered_results.csv`);
-        await fs.writeFile(csvFilePath, csvContent, 'utf8');
-        console.log(`Filtered results saved to: ${csvFilePath}`);
-
         return {
             data: results,
             status: 200,
             pValueRange: {
-                maxLog10P: maxLog10pOverall,
+                maxLog10P: effectiveMaxPval,
                 minLog10P: effectiveMinPval
             }
         };
     } catch (error) {
-        console.error(`Error querying GWAS data with Tabix: ${error.message}`);
+        console.error(`Error querying GWAS data: ${error.message}`);
         return { error: error.message, status: 500 };
     }
 }
+// export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
+//     try {
+//         if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
+//             return { error: 'Invalid study type.', status: 500 };
+//         }
 
+//         const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
+//         const filePath = join(GWAS_FILES_PATH, gz_file);
+
+//         await fs.access(filePath);
+//         await fs.access(`${filePath}.tbi`);
+
+//         const results = {};
+
+//         // Default minPval to 100 (-log10(p) >= 100) if not provided
+//         const effectiveMinPval = minPval !== null ? parseFloat(minPval) : 100;
+//         const effectiveMaxPval = maxPval !== null ? parseFloat(maxPval) : Infinity;
+
+//         console.log(`Fetching data with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+
+//         const promises = [];
+//         for (let chrom = 1; chrom <= 22; chrom++) {
+//             promises.push(
+//                 fetchTabixData(chrom, filePath)
+//                     .then(chromData => {
+//                         if (chromData.length > 0) {
+//                             // Log sample data for debugging
+//                             if (chrom === 1) {
+//                                 console.log(`Sample data from chromosome ${chrom}:`, 
+//                                     chromData.slice(0, 3).map(row => ({ 
+//                                         id: row.id, 
+//                                         p: row.p, 
+//                                         log10p: row.log10p 
+//                                     }))
+//                                 );
+//                             }
+
+//                             // Filter directly using log10p field (no recomputation)
+//                             const filteredData = chromData.filter(row => {
+//                                 const log10p = parseFloat(row.log10p) || 0; // Ensure it's a number
+//                                 return log10p >= effectiveMinPval && 
+//                                        (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval);
+//                             });
+
+//                             if (filteredData.length > 0) {
+//                                 console.log(`Chromosome ${chrom}: Found ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
+//                                 results[chrom] = filteredData;
+//                             }
+//                         }
+//                     })
+//                     .catch(error => {
+//                         console.error(`Error processing chromosome ${chrom}: ${error.message}`);
+//                         results[chrom] = [];
+//                     })
+//             );
+//         }
+
+//         await Promise.all(promises);
+
+//         const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
+//         console.log(`Returning ${totalRows} data points with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
+
+//         if (totalRows === 0) {
+//             return {
+//                 error: 'No data found in the specified -log10(p) range',
+//                 status: 404,
+//                 pValueRange: {
+//                     maxLog10P: effectiveMaxPval,
+//                     minLog10P: effectiveMinPval
+//                 }
+//             };
+//         }
+
+//         // Prepare data for frontend (no recomputation, just pass log10p as-is)
+//         Object.values(results).forEach(chromData => {
+//             chromData.forEach(row => {
+//                 row.log10p = parseFloat(row.log10p) || 0; // Ensure it's a number
+//                 row.p_for_display = row.p; // Keep original p-value string for display
+//             });
+//         });
+
+//         return {
+//             data: results,
+//             status: 200,
+//             pValueRange: {
+//                 maxLog10P: effectiveMaxPval,
+//                 minLog10P: effectiveMinPval
+//             }
+//         };
+//     } catch (error) {
+//         console.error(`Error querying GWAS data: ${error.message}`);
+//         return { error: error.message, status: 500 };
+//     }
+// }
 function checkPvalThreshold(pval, threshold) {
     switch (threshold) {
         case '1e-06_to_0.0001':
