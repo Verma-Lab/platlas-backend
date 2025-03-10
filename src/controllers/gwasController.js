@@ -119,8 +119,9 @@ import {
 //   }
 export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
     try {
-        if (!['gwama', 'mrmega'].includes(study.toLowerCase())) {
-            return { error: 'Invalid study type.', status: 500 };
+        // Fix study validation
+        if (typeof study !== 'string' || !['gwama', 'mrmega'].includes(study.toLowerCase())) {
+            return { error: 'Invalid study type. Must be "gwama" or "mrmega".', status: 500 };
         }
 
         const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
@@ -130,25 +131,26 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
         await fs.access(`${filePath}.tbi`);
 
         const results = {};
-        const batchSize = 4; // Process 4 chromosomes at a time
+        const batchSize = 0; // Set to 0 to disable batching and revert to original Promise.all behavior; adjust to 4 or tweak as needed
 
-        // Keep the original minPval/maxPval logic intact
+        // Original minPval/maxPval logic preserved, with fallback for globalMaxLog10p
         let effectiveMinPval;
         if (minPval !== null) {
             effectiveMinPval = minPval;
         } else {
-            // Original adaptive default logic preserved
-            if (globalMaxLog10p >= 400) {
+            // If globalMaxLog10p isn’t defined, default to 8 (genome-wide significance)
+            const fallbackMaxLog10p = typeof globalMaxLog10p !== 'undefined' ? globalMaxLog10p : 8;
+            if (fallbackMaxLog10p >= 400) {
                 effectiveMinPval = 400;
-            } else if (globalMaxLog10p >= 300) {
+            } else if (fallbackMaxLog10p >= 300) {
                 effectiveMinPval = 300;
-            } else if (globalMaxLog10p >= 200) {
+            } else if (fallbackMaxLog10p >= 200) {
                 effectiveMinPval = 200;
-            } else if (globalMaxLog10p >= 100) {
+            } else if (fallbackMaxLog10p >= 100) {
                 effectiveMinPval = 100;
-            } else if (globalMaxLog10p >= 20) {
+            } else if (fallbackMaxLog10p >= 20) {
                 effectiveMinPval = 20;
-            } else if (globalMaxLog10p >= 8) {
+            } else if (fallbackMaxLog10p >= 8) {
                 effectiveMinPval = 8;
             } else {
                 effectiveMinPval = 5;
@@ -158,13 +160,11 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
 
         console.log(`Fetching data with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
 
-        // Batching logic with single-pass processing
         const promises = [];
         for (let chrom = 1; chrom <= 22; chrom++) {
             promises.push(
                 fetchTabixData(chrom, filePath)
                     .then(chromData => {
-                        // Filter directly in single pass (original filtering logic preserved)
                         const filteredData = chromData.filter(row => {
                             const log10p = Number(row.log10p) || 0;
                             return log10p >= effectiveMinPval && 
@@ -182,11 +182,16 @@ export async function queryGWASData(phenoId, cohortId, study, minPval = null, ma
                     })
             );
 
-            // Execute in batches
-            if (promises.length === batchSize || chrom === 22) {
+            // Batching: if batchSize is 0, wait for all at once; otherwise, batch
+            if (batchSize > 0 && (promises.length === batchSize || chrom === 22)) {
                 await Promise.all(promises);
                 promises.length = 0; // Clear for next batch
             }
+        }
+
+        // If not batching, wait for all promises at once (original behavior)
+        if (batchSize === 0) {
+            await Promise.all(promises);
         }
 
         const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
