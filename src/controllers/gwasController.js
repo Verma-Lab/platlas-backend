@@ -43,184 +43,81 @@ import {
     }
 }
 
-// export async function queryGWASData(req, res) {
-//     const { phenoId, cohortId, study, minPval, maxPval } = req.query;
+export async function queryGWASData(req, res) {
+    const { phenoId, cohortId, study, minPval, maxPval } = req.query;
     
-//     if (!phenoId || !cohortId || !study) {
-//       return res.status(400).json({ 
-//         error: 'phenoId, cohortId, and study are required parameters' 
-//       });
-//     }
-  
-//     try {
-//       console.log(`Received GWAS data request for ${phenoId}, ${cohortId}, ${study}`);
-//       console.log(`P-value range parameters: min=${minPval || 'not specified'}, max=${maxPval || 'not specified'}`);
-      
-//       // Parse p-value range (or pass null for auto-detection)
-//     //   const minPvalParsed = minPval ? parseFloat(minPval) : null;
-//     //   const maxPvalParsed = maxPval ? parseFloat(maxPval) : null;
-      
-//       // Call the service function
-//       const result = await queryGWASDataService(
-//         phenoId, 
-//         cohortId, 
-//         study, 
-//         minPval,  
-//         maxPval  
-//       );
-      
-//       // Handle error cases
-//       if (result.error) {
-//         console.error(`GWAS data error: ${result.error}`);
-//         return res.status(result.status).json({ 
-//           error: result.error,
-//           pValueRange: result.pValueRange // Include range even in error cases
-//         });
-//       }
-  
-//       // Count total data points for logging
-//       const totalPoints = Object.values(result.data)
-//         .reduce((sum, chromData) => sum + chromData.length, 0);
-      
-//       console.log(`Returning ${totalPoints} data points in p-value range: ${result.pValueRange.minPValue} to ${result.pValueRange.maxPValue}`);
-      
-//       // Stream the response to handle large datasets
-//       res.setHeader('Content-Type', 'application/json');
-      
-//       // Start the JSON response
-//       res.write('{');
-      
-//       // Always include the p-value range
-//       res.write(`"pValueRange":${JSON.stringify(result.pValueRange)},`);
-      
-//       // Write the data object
-//       res.write('"data":{');
-      
-//       // Stream each chromosome's data
-//       let isFirstChrom = true;
-//       for (const [chrom, chromData] of Object.entries(result.data)) {
-//         if (chromData.length > 0) {
-//           if (!isFirstChrom) res.write(',');
-//           res.write(`"${chrom}":${JSON.stringify(chromData)}`);
-//           isFirstChrom = false;
-//         }
-//       }
-      
-//       // Close the response objects
-//       res.write('}}');
-//       res.end();
-      
-//     } catch (error) {
-//       console.error(`Error in queryGWASData controller: ${error.message}`);
-//       if (!res.headersSent) {
-//         res.status(500).json({ error: error.message });
-//       }
-//     }
-//   }
-export async function queryGWASData(phenoId, cohortId, study, minPval = null, maxPval = null) {
-    try {
-        // Fix study validation
-        if (typeof study !== 'string' || !['gwama', 'mrmega'].includes(study.toLowerCase())) {
-            return { error: 'Invalid study type. Must be "gwama" or "mrmega".', status: 500 };
-        }
-
-        const gz_file = `${phenoId}.${cohortId}.${study}_pval_up_to_1e-05.gz`;
-        const filePath = join(GWAS_FILES_PATH, gz_file);
-
-        await fs.access(filePath);
-        await fs.access(`${filePath}.tbi`);
-
-        const results = {};
-        const batchSize = 0; // Set to 0 to disable batching and revert to original Promise.all behavior; adjust to 4 or tweak as needed
-
-        // Original minPval/maxPval logic preserved, with fallback for globalMaxLog10p
-        let effectiveMinPval;
-        if (minPval !== null) {
-            effectiveMinPval = minPval;
-        } else {
-            // If globalMaxLog10p isn’t defined, default to 8 (genome-wide significance)
-            const fallbackMaxLog10p = typeof globalMaxLog10p !== 'undefined' ? globalMaxLog10p : 8;
-            if (fallbackMaxLog10p >= 400) {
-                effectiveMinPval = 400;
-            } else if (fallbackMaxLog10p >= 300) {
-                effectiveMinPval = 300;
-            } else if (fallbackMaxLog10p >= 200) {
-                effectiveMinPval = 200;
-            } else if (fallbackMaxLog10p >= 100) {
-                effectiveMinPval = 100;
-            } else if (fallbackMaxLog10p >= 20) {
-                effectiveMinPval = 20;
-            } else if (fallbackMaxLog10p >= 8) {
-                effectiveMinPval = 8;
-            } else {
-                effectiveMinPval = 5;
-            }
-        }
-        const effectiveMaxPval = maxPval !== null ? maxPval : Infinity;
-
-        console.log(`Fetching data with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
-
-        const promises = [];
-        for (let chrom = 1; chrom <= 22; chrom++) {
-            promises.push(
-                fetchTabixData(chrom, filePath)
-                    .then(chromData => {
-                        const filteredData = chromData.filter(row => {
-                            const log10p = Number(row.log10p) || 0;
-                            return log10p >= effectiveMinPval && 
-                                   (effectiveMaxPval === Infinity || log10p <= effectiveMaxPval);
-                        });
-
-                        if (filteredData.length > 0) {
-                            console.log(`Chromosome ${chrom}: Found ${filteredData.length} rows with -log10(p) >= ${effectiveMinPval}`);
-                            results[chrom] = filteredData;
-                        }
-                    })
-                    .catch(error => {
-                        console.error(`Error processing chromosome ${chrom}: ${error.message}`);
-                        results[chrom] = [];
-                    })
-            );
-
-            // Batching: if batchSize is 0, wait for all at once; otherwise, batch
-            if (batchSize > 0 && (promises.length === batchSize || chrom === 22)) {
-                await Promise.all(promises);
-                promises.length = 0; // Clear for next batch
-            }
-        }
-
-        // If not batching, wait for all promises at once (original behavior)
-        if (batchSize === 0) {
-            await Promise.all(promises);
-        }
-
-        const totalRows = Object.values(results).reduce((acc, chromData) => acc + chromData.length, 0);
-        console.log(`Returning ${totalRows} data points with -log10(p) range: ${effectiveMinPval} to ${effectiveMaxPval}`);
-
-        if (totalRows === 0) {
-            return {
-                error: 'No data found in the specified -log10(p) range',
-                status: 404,
-                pValueRange: {
-                    maxLog10P: effectiveMaxPval,
-                    minLog10P: effectiveMinPval
-                }
-            };
-        }
-
-        return {
-            data: results,
-            status: 200,
-            pValueRange: {
-                maxLog10P: effectiveMaxPval,
-                minLog10P: effectiveMinPval
-            }
-        };
-    } catch (error) {
-        console.error(`Error querying GWAS data: ${error.message}`);
-        return { error: error.message, status: 500 };
+    if (!phenoId || !cohortId || !study) {
+      return res.status(400).json({ 
+        error: 'phenoId, cohortId, and study are required parameters' 
+      });
     }
-}
+  
+    try {
+      console.log(`Received GWAS data request for ${phenoId}, ${cohortId}, ${study}`);
+      console.log(`P-value range parameters: min=${minPval || 'not specified'}, max=${maxPval || 'not specified'}`);
+      
+      // Parse p-value range (or pass null for auto-detection)
+    //   const minPvalParsed = minPval ? parseFloat(minPval) : null;
+    //   const maxPvalParsed = maxPval ? parseFloat(maxPval) : null;
+      
+      // Call the service function
+      const result = await queryGWASDataService(
+        phenoId, 
+        cohortId, 
+        study, 
+        minPval,  
+        maxPval  
+      );
+      
+      // Handle error cases
+      if (result.error) {
+        console.error(`GWAS data error: ${result.error}`);
+        return res.status(result.status).json({ 
+          error: result.error,
+          pValueRange: result.pValueRange // Include range even in error cases
+        });
+      }
+  
+      // Count total data points for logging
+      const totalPoints = Object.values(result.data)
+        .reduce((sum, chromData) => sum + chromData.length, 0);
+      
+      console.log(`Returning ${totalPoints} data points in p-value range: ${result.pValueRange.minPValue} to ${result.pValueRange.maxPValue}`);
+      
+      // Stream the response to handle large datasets
+      res.setHeader('Content-Type', 'application/json');
+      
+      // Start the JSON response
+      res.write('{');
+      
+      // Always include the p-value range
+      res.write(`"pValueRange":${JSON.stringify(result.pValueRange)},`);
+      
+      // Write the data object
+      res.write('"data":{');
+      
+      // Stream each chromosome's data
+      let isFirstChrom = true;
+      for (const [chrom, chromData] of Object.entries(result.data)) {
+        if (chromData.length > 0) {
+          if (!isFirstChrom) res.write(',');
+          res.write(`"${chrom}":${JSON.stringify(chromData)}`);
+          isFirstChrom = false;
+        }
+      }
+      
+      // Close the response objects
+      res.write('}}');
+      res.end();
+      
+    } catch (error) {
+      console.error(`Error in queryGWASData controller: ${error.message}`);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  }
+
 export async function getTopResults(req, res) {
     const { phenoId, cohortId, study } = req.query;
     if (!phenoId || !cohortId || !study) {
