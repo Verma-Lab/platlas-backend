@@ -80,6 +80,10 @@ function parseNumberWithCommas(str) {
 }
 
 export async function getSNPAnnotation(chromosome, position) {
+    let fileStream = null;
+    let gunzip = null;
+    let rl = null;
+
     try {
         console.log(`Searching for SNP at chromosome ${chromosome}, position ${position}`);
         
@@ -99,16 +103,18 @@ export async function getSNPAnnotation(chromosome, position) {
         }
         
         // Create streams to read the gzipped file
-        const fileStream = createReadStream(SNP_MAPPING);
-        const gunzip = createGunzip();
+        fileStream = createReadStream(SNP_MAPPING);
+        gunzip = createGunzip();
         
-        // Handle gunzip errors
-        gunzip.on('error', (err) => {
-            console.error('Gunzip error:', err.message);
-            throw new Error(`Failed to decompress file: ${err.message}`);
+        // Create a promise that will reject if gunzip emits an error
+        const gunzipErrorPromise = new Promise((_, reject) => {
+            gunzip.on('error', (err) => {
+                console.error('Gunzip error:', err.message);
+                reject(new Error(`Failed to decompress file: ${err.message}`));
+            });
         });
         
-        const rl = readline.createInterface({
+        rl = readline.createInterface({
             input: fileStream.pipe(gunzip),
             crlfDelay: Infinity
         });
@@ -116,67 +122,79 @@ export async function getSNPAnnotation(chromosome, position) {
         let lineCount = 0;
         let matchFound = false;
         
-        // Find matching SNP based on chromosome and position
-        for await (const line of rl) {
-            lineCount++;
-            
-            // Log sample lines to understand the file format
-            if (lineCount <= 3) {
-                console.log(`Sample line ${lineCount}:`, line.substring(0, 100) + '...');
-            }
-            
-            // Skip header line
-            if (line.startsWith('#')) {
-                console.log('Skipping header line:', line.substring(0, 100) + '...');
-                continue;
-            }
-            
-            const fields = line.split('\t');
-            
-            // Check if the line has enough fields
-            if (fields.length < 20) {
-                console.log(`Line ${lineCount} has insufficient fields (${fields.length}):`, 
-                            line.substring(0, 100) + '...');
-                continue;
-            }
-            
-            const snpChrom = fields[0];
-            const snpPos = parseInt(fields[1]);
-            
-            // Log some positions to verify we're parsing correctly
-            if (lineCount % 10000 === 0) {
-                console.log(`Checked ${lineCount} lines. Example: Chr=${snpChrom}, Pos=${snpPos}`);
-            }
-            
-            if (snpChrom === chromosome && snpPos === parseInt(position)) {
-                matchFound = true;
-                console.log(`Match found at line ${lineCount}!`);
+        // Use Promise.race to handle both the normal operation and potential gunzip errors
+        const processingPromise = (async () => {
+            // Find matching SNP based on chromosome and position
+            for await (const line of rl) {
+                lineCount++;
                 
-                return {
-                    chromosome: snpChrom,
-                    position: snpPos,
-                    rsid: fields[14] || 'Unknown', // Existing_variation field
-                    allele: fields[4] || 'Unknown',
-                    gene: fields[18] || 'Unknown', // SYMBOL field
-                    symbol: fields[19] || fields[18] || 'Unknown', // SYMBOL field
-                    feature_type: fields[7] || 'Unknown',
-                    consequence: fields[8] || 'Unknown'
-                };
+                // Log sample lines to understand the file format
+                if (lineCount <= 3) {
+                    console.log(`Sample line ${lineCount}:`, line.substring(0, 100) + '...');
+                }
+                
+                // Skip header line
+                if (line.startsWith('#')) {
+                    console.log('Skipping header line:', line.substring(0, 100) + '...');
+                    continue;
+                }
+                
+                const fields = line.split('\t');
+                
+                // Check if the line has enough fields
+                if (fields.length < 20) {
+                    console.log(`Line ${lineCount} has insufficient fields (${fields.length}):`, 
+                                line.substring(0, 100) + '...');
+                    continue;
+                }
+                
+                const snpChrom = fields[0];
+                const snpPos = parseInt(fields[1]);
+                
+                // Log some positions to verify we're parsing correctly
+                if (lineCount % 10000 === 0) {
+                    console.log(`Checked ${lineCount} lines. Example: Chr=${snpChrom}, Pos=${snpPos}`);
+                }
+                
+                if (snpChrom === chromosome && snpPos === parseInt(position)) {
+                    matchFound = true;
+                    console.log(`Match found at line ${lineCount}!`);
+                    
+                    return {
+                        chromosome: snpChrom,
+                        position: snpPos,
+                        rsid: fields[14] || 'Unknown', // Existing_variation field
+                        allele: fields[4] || 'Unknown',
+                        gene: fields[18] || 'Unknown', // SYMBOL field
+                        symbol: fields[19] || fields[18] || 'Unknown', // SYMBOL field
+                        feature_type: fields[7] || 'Unknown',
+                        consequence: fields[8] || 'Unknown'
+                    };
+                }
             }
-        }
+            
+            console.log(`Processed ${lineCount} lines. Match found: ${matchFound}`);
+            
+            // If no exact match, return null
+            return null;
+        })();
         
-        console.log(`Processed ${lineCount} lines. Match found: ${matchFound}`);
+        // Wait for either the processing to complete or an error to occur
+        return await Promise.race([processingPromise, gunzipErrorPromise]);
         
-        // If no exact match, return null
-        return null;
     } catch (err) {
         console.error(`Error getting SNP annotation: ${err.message}`);
         console.error(err.stack);
         throw err;
     } finally {
-        // Ensure streams are closed
-        rl.close();
-        fileStream.destroy();
+        // Ensure streams are closed properly
+        if (rl) {
+            rl.close();
+        }
+        if (fileStream) {
+            fileStream.destroy();
+        }
+        // Note: gunzip stream will be automatically closed when the fileStream is destroyed
     }
 }
 
