@@ -86,115 +86,100 @@ export async function getSNPAnnotation(chromosome, position) {
 
     try {
         console.log(`Searching for SNP at chromosome ${chromosome}, position ${position}`);
-        
+
         if (!chromosome || !position) {
             throw new Error('Chromosome and position are required');
         }
-        
-        console.log(`SNP_MAPPING file path: ${SNP_MAPPING}`);
-        
-        // Check if file exists
-        try {
-            await fs.access(SNP_MAPPING);
-            console.log('Annotation file exists and is accessible');
-        } catch (e) {
-            console.error('Cannot access annotation file:', e.message);
-            throw new Error(`Cannot access annotation file: ${e.message}`);
-        }
-        
-        // Create streams to read the gzipped file
+
+        const targetChrom = chromosome;
+        const targetPos = parseInt(position);
+        let prevSnp = null;
+        let closestSnp = null;
+        let currentChrom = null;
+
+        // Set up streams to read the gzipped annotation file
         fileStream = createReadStream(SNP_MAPPING);
         gunzip = createGunzip();
-        
-        // Create a promise that will reject if gunzip emits an error
-        const gunzipErrorPromise = new Promise((_, reject) => {
-            gunzip.on('error', (err) => {
-                console.error('Gunzip error:', err.message);
-                reject(new Error(`Failed to decompress file: ${err.message}`));
-            });
-        });
-        
         rl = readline.createInterface({
             input: fileStream.pipe(gunzip),
             crlfDelay: Infinity
         });
-        
-        let lineCount = 0;
-        let matchFound = false;
-        
-        // Use Promise.race to handle both the normal operation and potential gunzip errors
-        const processingPromise = (async () => {
-            // Find matching SNP based on chromosome and position
-            for await (const line of rl) {
-                lineCount++;
-                
-                // Log sample lines to understand the file format
-                if (lineCount <= 3) {
-                    console.log(`Sample line ${lineCount}:`, line.substring(0, 100) + '...');
+
+        // Process the file line by line
+        for await (const line of rl) {
+            if (line.startsWith('#')) continue; // Skip header
+            const fields = line.split('\t');
+            if (fields.length < 20) continue; // Ensure enough fields
+
+            const snpChrom = fields[0];
+            const snpPos = parseInt(fields[1]);
+
+            // Detect chromosome change
+            if (snpChrom !== currentChrom) {
+                if (currentChrom === targetChrom && prevSnp) {
+                    // Moved past target chromosome; use the last SNP as closest
+                    closestSnp = prevSnp;
+                    break;
                 }
-                
-                // Skip header line
-                if (line.startsWith('#')) {
-                    console.log('Skipping header line:', line.substring(0, 100) + '...');
-                    continue;
-                }
-                
-                const fields = line.split('\t');
-                
-                // Check if the line has enough fields
-                if (fields.length < 20) {
-                    console.log(`Line ${lineCount} has insufficient fields (${fields.length}):`, 
-                                line.substring(0, 100) + '...');
-                    continue;
-                }
-                
-                const snpChrom = fields[0];
-                const snpPos = parseInt(fields[1]);
-                
-                // Log some positions to verify we're parsing correctly
-                if (lineCount % 10000 === 0) {
-                    console.log(`Checked ${lineCount} lines. Example: Chr=${snpChrom}, Pos=${snpPos}`);
-                }
-                
-                if (snpChrom === chromosome && snpPos === parseInt(position)) {
-                    matchFound = true;
-                    console.log(`Match found at line ${lineCount}!`);
-                    
+                currentChrom = snpChrom;
+            }
+
+            if (snpChrom === targetChrom) {
+                if (snpPos === targetPos) {
+                    // Exact match found
+                    console.log(`Exact match found at chromosome ${snpChrom}, position ${snpPos}`);
                     return {
                         chromosome: snpChrom,
                         position: snpPos,
-                        rsid: fields[14] || 'Unknown', // Existing_variation field
-                        allele: fields[4] || 'Unknown',
-                        gene: fields[18] || 'Unknown', // SYMBOL field
-                        symbol: fields[19] || fields[18] || 'Unknown', // SYMBOL field
-                        feature_type: fields[7] || 'Unknown',
-                        consequence: fields[8] || 'Unknown'
+                        rsid: fields[14] || 'Unknown',      // Existing_variation
+                        allele: fields[4] || 'Unknown',     // Allele
+                        symbol: fields[19] || 'Unknown',    // SYMBOL (gene)
+                        feature_type: fields[7] || 'Unknown', // Feature_type
+                        consequence: fields[8] || 'Unknown',  // Consequence
+                        isExact: true                       // Indicate exact match
                     };
+                } else if (prevSnp && prevSnp.chromosome === targetChrom) {
+                    // Compare distances to find the nearest SNP
+                    const prevDiff = Math.abs(prevSnp.position - targetPos);
+                    const currDiff = Math.abs(snpPos - targetPos);
+                    if (prevDiff <= currDiff) {
+                        // Previous SNP is closer or equal; stop searching
+                        closestSnp = { ...prevSnp, isExact: false };
+                        break;
+                    }
                 }
+                // Store current SNP as previous for next iteration
+                prevSnp = {
+                    chromosome: snpChrom,
+                    position: snpPos,
+                    rsid: fields[14] || 'Unknown',
+                    allele: fields[4] || 'Unknown',
+                    symbol: fields[19] || 'Unknown',
+                    feature_type: fields[7] || 'Unknown',
+                    consequence: fields[8] || 'Unknown'
+                };
             }
-            
-            console.log(`Processed ${lineCount} lines. Match found: ${matchFound}`);
-            
-            // If no exact match, return null
-            return null;
-        })();
-        
-        // Wait for either the processing to complete or an error to occur
-        return await Promise.race([processingPromise, gunzipErrorPromise]);
-        
+        }
+
+        // If no exact match and still on target chromosome, use the last SNP
+        if (!closestSnp && prevSnp && prevSnp.chromosome === targetChrom) {
+            closestSnp = { ...prevSnp, isExact: false };
+        }
+
+        if (closestSnp) {
+            console.log(`Nearest SNP found at chromosome ${closestSnp.chromosome}, position ${closestSnp.position}`);
+            return closestSnp;
+        }
+
+        console.log(`No SNP found for chromosome ${targetChrom}, position ${targetPos}`);
+        return null;
+
     } catch (err) {
         console.error(`Error getting SNP annotation: ${err.message}`);
-        console.error(err.stack);
         throw err;
     } finally {
-        // Ensure streams are closed properly
-        if (rl) {
-            rl.close();
-        }
-        if (fileStream) {
-            fileStream.destroy();
-        }
-        // Note: gunzip stream will be automatically closed when the fileStream is destroyed
+        if (rl) rl.close();
+        if (fileStream) fileStream.destroy();
     }
 }
 
