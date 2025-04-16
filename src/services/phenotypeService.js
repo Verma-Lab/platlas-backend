@@ -101,6 +101,13 @@ export async function getSNPAnnotation(chromosome, position) {
         // Create streams to read the gzipped file
         const fileStream = createReadStream(SNP_MAPPING);
         const gunzip = createGunzip();
+        
+        // Handle gunzip errors
+        gunzip.on('error', (err) => {
+            console.error('Gunzip error:', err.message);
+            throw new Error(`Failed to decompress file: ${err.message}`);
+        });
+        
         const rl = readline.createInterface({
             input: fileStream.pipe(gunzip),
             crlfDelay: Infinity
@@ -166,6 +173,10 @@ export async function getSNPAnnotation(chromosome, position) {
         console.error(`Error getting SNP annotation: ${err.message}`);
         console.error(err.stack);
         throw err;
+    } finally {
+        // Ensure streams are closed
+        rl.close();
+        fileStream.destroy();
     }
 }
 
