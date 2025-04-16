@@ -14,6 +14,7 @@ import debug from 'debug';
 import logger from '../utils/logger.js';
 import { searchSNPs } from '../controllers/snpMappingController.js';
 import path from 'path';
+import { getSNPAnnotation } from '../services/phenotypeService.js';
 const error = debug('app:error');
 const info = debug('app:info');
 // Phenotype routes
@@ -224,5 +225,21 @@ router.get('/findfiles', async (req, res) => {
         });
     }
 });
-
+router.get('/getSNPAnnotation', async (req, res) => {
+    console.log('Received request for /api/getSNPAnnotation:', req.query);
+    try {
+        const { chromosome, position } = req.query;
+        if (!chromosome || !position) {
+            console.log('Missing chromosome or position');
+            return res.status(400).json({ error: 'Chromosome and position are required' });
+        }
+        console.log('Calling getSNPAnnotation with:', { chromosome, position });
+        const annotation = await getSNPAnnotation(chromosome, position);
+        console.log('Annotation result:', annotation);
+        res.json(annotation || { error: 'SNP not found' });
+    } catch (error) {
+        console.error('Error in getSNPAnnotation route:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 export default router;
