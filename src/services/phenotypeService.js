@@ -4,6 +4,11 @@ import { parse } from 'csv-parse/sync';
 import { MANIFEST_PATH, GWAS_FILES_PATH, COMBINED_SNP_INFO } from '../config/constants.js';
 import { error } from '../utils/logger.js';
 
+import { createReadStream } from 'fs';
+import { createGunzip } from 'zlib';
+import readline from 'readline';
+import { SNP_MAPPING } from '../config/constants.js';
+
 
 
 // function parseNumberWithCommas(str) {
@@ -72,6 +77,51 @@ import { error } from '../utils/logger.js';
 function parseNumberWithCommas(str) {
     if (!str || str === '-') return 0;
     return parseInt(str.replace(/,/g, '')) || 0;
+}
+
+export async function getSNPAnnotation(chromosome, position) {
+    try {
+        if (!chromosome || !position) {
+            throw new Error('Chromosome and position are required');
+        }
+        
+        // Create streams to read the gzipped file
+        const fileStream = createReadStream(SNP_MAPPING);
+        const gunzip = createGunzip();
+        const rl = readline.createInterface({
+            input: fileStream.pipe(gunzip),
+            crlfDelay: Infinity
+        });
+        
+        // Find matching SNP based on chromosome and position
+        for await (const line of rl) {
+            // Skip header line
+            if (line.startsWith('#')) continue;
+            
+            const fields = line.split('\t');
+            const snpChrom = fields[0];
+            const snpPos = parseInt(fields[1]);
+            
+            if (snpChrom === chromosome && snpPos === parseInt(position)) {
+                return {
+                    chromosome: snpChrom,
+                    position: snpPos,
+                    rsid: fields[2], // ID field
+                    allele: fields[3],
+                    gene: fields[9], // Gene field
+                    symbol: fields[19], // SYMBOL field
+                    feature_type: fields[7],
+                    consequence: fields[8]
+                };
+            }
+        }
+        
+        // If no exact match, return null
+        return null;
+    } catch (err) {
+        console.error(`Error getting SNP annotation: ${err.message}`);
+        throw err;
+    }
 }
 
 export async function getPhenotypeStats(phenoId) {
