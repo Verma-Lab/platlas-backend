@@ -9,7 +9,9 @@ import { createGunzip } from 'zlib';
 import readline from 'readline';
 import { SNP_MAPPING } from '../config/constants.js';
 
-
+import sqlite3 from 'sqlite3';
+import { open } from 'sqlite';
+import { SNP_ANNOTATION_DB } from '../config/constants.js';
 
 // function parseNumberWithCommas(str) {
 //     if (!str || str === '-') return 0;
@@ -80,108 +82,62 @@ function parseNumberWithCommas(str) {
 }
 
 export async function getSNPAnnotation(chromosome, position) {
-    let fileStream = null;
-    let gunzip = null;
-    let rl = null;
-
     try {
-        console.log(`Searching for SNP at chromosome ${chromosome}, position ${position}`);
-
-        if (!chromosome || !position) {
-            throw new Error('Chromosome and position are required');
-        }
-
-        const targetChrom = chromosome;
-        const targetPos = parseInt(position);
-        let prevSnp = null;
-        let closestSnp = null;
-        let currentChrom = null;
-
-        // Set up streams to read the gzipped annotation file
-        fileStream = createReadStream(SNP_MAPPING);
-        gunzip = createGunzip();
-        rl = readline.createInterface({
-            input: fileStream.pipe(gunzip),
-            crlfDelay: Infinity
-        });
-
-        // Process the file line by line
-        for await (const line of rl) {
-            if (line.startsWith('#')) continue; // Skip header
-            const fields = line.split('\t');
-            if (fields.length < 20) continue; // Ensure enough fields
-
-            const snpChrom = fields[0];
-            const snpPos = parseInt(fields[1]);
-
-            // Detect chromosome change
-            if (snpChrom !== currentChrom) {
-                if (currentChrom === targetChrom && prevSnp) {
-                    // Moved past target chromosome; use the last SNP as closest
-                    closestSnp = prevSnp;
-                    break;
-                }
-                currentChrom = snpChrom;
-            }
-
-            if (snpChrom === targetChrom) {
-                if (snpPos === targetPos) {
-                    // Exact match found
-                    console.log(`Exact match found at chromosome ${snpChrom}, position ${snpPos}`);
-                    return {
-                        chromosome: snpChrom,
-                        position: snpPos,
-                        rsid: fields[14] || 'Unknown',      // Existing_variation
-                        allele: fields[4] || 'Unknown',     // Allele
-                        symbol: fields[19] || 'Unknown',    // SYMBOL (gene)
-                        feature_type: fields[7] || 'Unknown', // Feature_type
-                        consequence: fields[8] || 'Unknown',  // Consequence
-                        isExact: true                       // Indicate exact match
-                    };
-                } else if (prevSnp && prevSnp.chromosome === targetChrom) {
-                    // Compare distances to find the nearest SNP
-                    const prevDiff = Math.abs(prevSnp.position - targetPos);
-                    const currDiff = Math.abs(snpPos - targetPos);
-                    if (prevDiff <= currDiff) {
-                        // Previous SNP is closer or equal; stop searching
-                        closestSnp = { ...prevSnp, isExact: false };
-                        break;
-                    }
-                }
-                // Store current SNP as previous for next iteration
-                prevSnp = {
-                    chromosome: snpChrom,
-                    position: snpPos,
-                    rsid: fields[14] || 'Unknown',
-                    allele: fields[4] || 'Unknown',
-                    symbol: fields[19] || 'Unknown',
-                    feature_type: fields[7] || 'Unknown',
-                    consequence: fields[8] || 'Unknown'
-                };
-            }
-        }
-
-        // If no exact match and still on target chromosome, use the last SNP
-        if (!closestSnp && prevSnp && prevSnp.chromosome === targetChrom) {
-            closestSnp = { ...prevSnp, isExact: false };
-        }
-
-        if (closestSnp) {
-            console.log(`Nearest SNP found at chromosome ${closestSnp.chromosome}, position ${closestSnp.position}`);
-            return closestSnp;
-        }
-
-        console.log(`No SNP found for chromosome ${targetChrom}, position ${targetPos}`);
-        return null;
-
+      console.log(`Searching for SNP at chromosome ${chromosome}, position ${position}`);
+  
+      if (!chromosome || !position) {
+        throw new Error('Chromosome and position are required');
+      }
+  
+      // Open the database connection
+      const db = await open({
+        filename: SNP_ANNOTATION_DB,
+        driver: sqlite3.Database
+      });
+  
+      // Check for exact match first
+      const exactMatch = await db.get(
+        'SELECT * FROM snp_annotations WHERE chromosome = ? AND position = ?',
+        [chromosome, parseInt(position)]
+      );
+  
+      if (exactMatch) {
+        console.log(`Exact match found at chromosome ${chromosome}, position ${position}`);
+        await db.close();
+        return {
+          ...exactMatch,
+          isExact: true
+        };
+      }
+  
+      // If no exact match, find the nearest SNP
+      const nearestSNP = await db.get(`
+        SELECT a.*
+        FROM snp_positions p
+        JOIN snp_annotations a ON p.id = a.rowid
+        WHERE p.chromosome = ?
+        ORDER BY ABS(p.min_pos - ?)
+        LIMIT 1
+      `, [chromosome, parseInt(position)]);
+  
+      if (nearestSNP) {
+        console.log(`Nearest SNP found at chromosome ${nearestSNP.chromosome}, position ${nearestSNP.position}`);
+        await db.close();
+        return {
+          ...nearestSNP,
+          isExact: false
+        };
+      }
+  
+      console.log(`No SNP found for chromosome ${chromosome}, position ${position}`);
+      await db.close();
+      return null;
+  
     } catch (err) {
-        console.error(`Error getting SNP annotation: ${err.message}`);
-        throw err;
-    } finally {
-        if (rl) rl.close();
-        if (fileStream) fileStream.destroy();
+      console.error(`Error getting SNP annotation: ${err.message}`);
+      throw err;
     }
-}
+  }
 
 export async function getPhenotypeStats(phenoId) {
     try {

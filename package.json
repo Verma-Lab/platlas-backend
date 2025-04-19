@@ -36,6 +36,7 @@
     "openai": "^4.76.1",
     "papaparse": "^5.5.2",
     "pdf-parse": "^1.1.1",
+    "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
     "uuid": "^11.0.5",
     "winston": "^3.17.0"
