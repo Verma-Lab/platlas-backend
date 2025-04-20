@@ -83,10 +83,16 @@ function parseNumberWithCommas(str) {
 
 export async function getSNPAnnotation(chromosome, position) {
     try {
-      console.log(`Searching for SNP at chromosome ${chromosome}, position ${position}`);
+      console.log(`Searching for nearest SNP to chromosome ${chromosome}, position ${position}`);
+      const startTime = Date.now();
   
       if (!chromosome || !position) {
         throw new Error('Chromosome and position are required');
+      }
+  
+      const positionInt = parseInt(position);
+      if (isNaN(positionInt) || positionInt <= 0) {
+        throw new Error('Position must be a positive integer');
       }
   
       // Open the database connection
@@ -95,41 +101,49 @@ export async function getSNPAnnotation(chromosome, position) {
         driver: sqlite3.Database
       });
   
-      // Check for exact match first
-      const exactMatch = await db.get(
-        'SELECT * FROM snp_annotations WHERE chromosome = ? AND position = ?',
-        [chromosome, parseInt(position)]
-      );
+      // Apply SQLite performance pragmas
+      await db.exec(`
+        PRAGMA cache_size = -20000;  -- 20MB cache
+        PRAGMA journal_mode = WAL;   -- Write-Ahead Logging
+        PRAGMA synchronous = NORMAL; -- Less strict syncing
+        PRAGMA temp_store = MEMORY;  -- Store temp tables in memory
+      `);
   
-      if (exactMatch) {
-        console.log(`Exact match found at chromosome ${chromosome}, position ${position}`);
-        await db.close();
-        return {
-          ...exactMatch,
-          isExact: true
-        };
-      }
-  
-      // If no exact match, find the nearest SNP
+      // Find the nearest SNP, excluding the exact position
       const nearestSNP = await db.get(`
-        SELECT a.*
+        SELECT a.*, ABS(p.min_pos - ?) AS distance
         FROM snp_positions p
         JOIN snp_annotations a ON p.id = a.rowid
         WHERE p.chromosome = ?
+          AND p.min_pos >= ? - 100000
+          AND p.min_pos <= ? + 100000
+          AND p.min_pos != ?
         ORDER BY ABS(p.min_pos - ?)
         LIMIT 1
-      `, [chromosome, parseInt(position)]);
+      `, [positionInt, chromosome, positionInt, positionInt, positionInt, positionInt]);
+  
+      const queryTime = Date.now() - startTime;
+      console.log(`Query completed in ${queryTime}ms`);
   
       if (nearestSNP) {
-        console.log(`Nearest SNP found at chromosome ${nearestSNP.chromosome}, position ${nearestSNP.position}`);
+        console.log(`Nearest SNP found at chromosome ${nearestSNP.chromosome}, position ${nearestSNP.position}, distance ${nearestSNP.distance}, gene ${nearestSNP.gene}, symbol ${nearestSNP.symbol}`);
         await db.close();
         return {
-          ...nearestSNP,
+          queriedPosition: positionInt,
+          chromosome: nearestSNP.chromosome,
+          position: nearestSNP.position,
+          rsid: nearestSNP.rsid,
+          allele: nearestSNP.allele,
+          gene: nearestSNP.gene,  // Ensembl Gene ID (e.g., ENSG00000223972)
+          symbol: nearestSNP.symbol,  // Gene symbol (e.g., DDX11L1)
+          feature_type: nearestSNP.feature_type,
+          consequence: nearestSNP.consequence,
+          distance: nearestSNP.distance,
           isExact: false
         };
       }
   
-      console.log(`No SNP found for chromosome ${chromosome}, position ${position}`);
+      console.log(`No nearby SNP found for chromosome ${chromosome}, position ${position}`);
       await db.close();
       return null;
   
@@ -137,7 +151,7 @@ export async function getSNPAnnotation(chromosome, position) {
       console.error(`Error getting SNP annotation: ${err.message}`);
       throw err;
     }
-  }
+}
 
 export async function getPhenotypeStats(phenoId) {
     try {

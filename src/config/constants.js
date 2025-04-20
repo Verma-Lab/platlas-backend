@@ -1,9 +1,9 @@
-// import path from 'path';
+import path from 'path';
 
 // export const BASE_PREFIX = "MVP_R4.1000G_";
 // export const TOP_HITS_PATH = "/Users/hritvik/Downloads/tabix_file/top_hits/";
 // export const GWAS_FILES_PATH = "/Users/hritvik/genomics-backend/DATABASE/";
-// export const MANIFEST_PATH = "/Users/hritvik/Desktop/metadata_platlas.csv";
+// export const MANIFEST_PATH = "/Users/hritvik/genomics-backend/DATABASE/metadata_platlas.csv";
 // export const ARGONNE_ACCESS_TOKEN = 'Ag2j86JY3Gg6reYe9lE87zlKpOM00XJWDDgxYKMVk7zoE6OpN7CkCoM0vB7V6regrWyyEv5xjX3EglfwDV5N6CQMmJE'
 // // export const SQLITE_DB_PATH = "/Users/hritvik/genomics-backend/phewas_database.db";``
 // export const GWAMA_DB = "/Users/hritvik/genomics-backend/SQLDB/phewas_gwama.db";``
@@ -16,6 +16,7 @@
 // export const SNP_FILE_PATH = '/Users/hritvik/Downloads/gwPheWAS_All.annotation.txt.gz';
 
 // export const SNP_MAPPING = '/Users/hritvik/Downloads/gwPheWAS_All.annotation.txt.gz'
+// export const SNP_ANNOTATION_DB = '/Users/hritvik/genomics-backend/src/utils/snp_annotations.db';
 
 
 
@@ -37,7 +38,7 @@ export const TABIX_BASE_PATH = 'https://g-fce312.fd635.8443.data.globus.org/tabi
 export const COMBINED_SNP_INFO = '/home/ac.guptahr/platlas-backend/DATABASE/combined_SNPs.csv'
 export const SNP_MAPPING = '/home/ac.guptahr/platlas-backend/DATABASE/gwPheWAS_All.annotation.txt.gz'
 // In src/config/constants.js
-export const SNP_ANNOTATION_DB = '/home/ac.guptahr/platlas-backend/DATABASE/snp_annotations.db';
+export const SNP_ANNOTATION_DB = '/home/ac.guptahr/snp_annotations.db';
 
 
 

@@ -1,4 +1,3 @@
-// File: scripts/preprocessAnnotation.js
 import fs from 'fs';
 import readline from 'readline';
 import { createGunzip } from 'zlib';
@@ -15,14 +14,15 @@ async function preprocessAnnotation(inputFile, outputDbFile) {
     driver: sqlite3.Database
   });
   
-  // Create the table
+  // Create the table with gene column
   await db.exec(`
     CREATE TABLE IF NOT EXISTS snp_annotations (
       chromosome TEXT,
       position INTEGER,
       rsid TEXT,
       allele TEXT,
-      symbol TEXT,
+      gene TEXT,  -- Ensembl Gene ID (e.g., ENSG00000223972)
+      symbol TEXT,  -- Gene symbol (e.g., DDX11L1)
       feature_type TEXT,
       consequence TEXT,
       PRIMARY KEY (chromosome, position)
@@ -58,7 +58,8 @@ async function preprocessAnnotation(inputFile, outputDbFile) {
       position: parseInt(fields[1]),
       rsid: fields[14] || 'Unknown',  // Existing_variation
       allele: fields[4] || 'Unknown', // Allele
-      symbol: fields[19] || 'Unknown', // SYMBOL (gene)
+      gene: fields[5] || 'Unknown',   // Gene (Ensembl ID)
+      symbol: fields[19] || 'Unknown', // SYMBOL (gene symbol)
       feature_type: fields[7] || 'Unknown', // Feature_type
       consequence: fields[8] || 'Unknown'  // Consequence
     };
@@ -70,8 +71,8 @@ async function preprocessAnnotation(inputFile, outputDbFile) {
     if (batch.length >= batchSize) {
       const stmt = await db.prepare(`
         INSERT OR REPLACE INTO snp_annotations 
-        (chromosome, position, rsid, allele, symbol, feature_type, consequence)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (chromosome, position, rsid, allele, gene, symbol, feature_type, consequence)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
       
       for (const data of batch) {
@@ -80,6 +81,7 @@ async function preprocessAnnotation(inputFile, outputDbFile) {
           data.position,
           data.rsid,
           data.allele,
+          data.gene,
           data.symbol,
           data.feature_type,
           data.consequence
@@ -97,8 +99,8 @@ async function preprocessAnnotation(inputFile, outputDbFile) {
   if (batch.length > 0) {
     const stmt = await db.prepare(`
       INSERT OR REPLACE INTO snp_annotations 
-      (chromosome, position, rsid, allele, symbol, feature_type, consequence)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (chromosome, position, rsid, allele, gene, symbol, feature_type, consequence)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     for (const data of batch) {
@@ -107,6 +109,7 @@ async function preprocessAnnotation(inputFile, outputDbFile) {
         data.position,
         data.rsid,
         data.allele,
+        data.gene,
         data.symbol,
         data.feature_type,
         data.consequence
@@ -152,8 +155,8 @@ async function preprocessAnnotation(inputFile, outputDbFile) {
 }
 
 // Call the function with appropriate paths
-const inputFile = '/home/ac.guptahr/platlas-backend/DATABASE/gwPheWAS_All.annotation.txt.gz';
-const outputDbFile = '/home/ac.guptahr/platlas-backend/src/utils/snp_annotations.db';
+const inputFile = '/Users/hritvik/Downloads/gwPheWAS_All.annotation.txt.gz';
+const outputDbFile = '/Users/hritvik/genomics-backend/src/utils/snp_annotations.db';
 
 preprocessAnnotation(inputFile, outputDbFile)
   .catch(err => console.error('Error during preprocessing:', err));
