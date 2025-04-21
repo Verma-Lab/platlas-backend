@@ -20,7 +20,7 @@ import path from 'path';
 
 
 
-import path from 'path';
+// import path from 'path';
 
 export const BASE_PREFIX = "MVP_R4.1000G_";
 export const TOP_HITS_PATH = "/Users/hritvik/Downloads/tabix_file/top_hits/";
