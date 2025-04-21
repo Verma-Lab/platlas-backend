@@ -38,7 +38,7 @@ export const TABIX_BASE_PATH = 'https://g-fce312.fd635.8443.data.globus.org/tabi
 export const COMBINED_SNP_INFO = '/home/ac.guptahr/platlas-backend/DATABASE/combined_SNPs.csv'
 export const SNP_MAPPING = '/home/ac.guptahr/platlas-backend/DATABASE/gwPheWAS_All.annotation.txt.gz'
 // In src/config/constants.js
-export const SNP_ANNOTATION_DB = '/home/ac.guptahr/snp_annotations.db';
+export const SNP_ANNOTATION_DB = '/nfs/platlas_stor/db/snp_annotations.db';
 
 
 
