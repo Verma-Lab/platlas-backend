@@ -108,7 +108,8 @@ export async function getSNPAnnotation(chromosome, position) {
         PRAGMA synchronous = NORMAL; -- Less strict syncing
         PRAGMA temp_store = MEMORY;  -- Store temp tables in memory
       `);
-  
+        
+      console.log('we are here')
       // Find the nearest SNP, excluding the exact position
       const nearestSNP = await db.get(`
         SELECT a.*, ABS(p.min_pos - ?) AS distance
