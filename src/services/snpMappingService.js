@@ -1,58 +1,100 @@
 // src/services/snpMappingService.js
-import { promises as fs } from 'fs';
+import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
-import { exec } from 'child_process';
 import logger from '../utils/logger.js';
-import { SNP_MAPPING } from '../config/constants.js';
-
-const execAsync = promisify(exec);
-const SNP_FILE_PATH = SNP_MAPPING
-// 0|platlas-backend  | Found 0 rows for SNP 1:63667:C:T
+import { GWAMA_DB, MRMEGA_DB, SNP_ANNOTATION_DB } from '../config/constants.js';
 
 class SNPMappingService {
-    async searchSNPs(searchTerm) {
-        try {
-            // Verify files exist
-            await fs.access(SNP_FILE_PATH);
-            await fs.access(`${SNP_FILE_PATH}.tbi`);
+  async searchSNPs(searchTerm) {
+    try {
+      // Normalize search term
+      const term = searchTerm.toLowerCase().startsWith('rs') 
+        ? searchTerm.slice(2) 
+        : searchTerm;
 
-            // Basic tabix query for chromosome 1
-            const command = `tabix ${SNP_FILE_PATH} 1 | head -n 50`;
-            const { stdout } = await execAsync(command);
-            
+      if (!term) {
+        return { results: [] };
+      }
 
-            
-            if (!stdout.trim()) {
-                return { results: [] };
-            }
+      // Connect to databases
+      const gwamaDb = new sqlite3.Database(GWAMA_DB, sqlite3.OPEN_READONLY);
+      const mrmegaDb = new sqlite3.Database(MRMEGA_DB, sqlite3.OPEN_READONLY);
+      const annotationDb = new sqlite3.Database(SNP_ANNOTATION_DB, sqlite3.OPEN_READONLY);
 
-            const lines = stdout.split('\n').filter(Boolean);
-            
-            // Map the results to the expected format
-            const results = lines.map(line => {
-                const fields = line.split('\t');
-                // console.log("fields",fields)
-                return {
-                    type: 'snp',
-                    rsId: fields[14],  // We'll fix the actual rsId
-                    internalId: fields[2] || 'unknown',
-                    chromosome: fields[0] || '1',
-                    position: parseInt(fields[1]) || 0,
-                    gene: fields[5],
-                    consequence: fields[8] || 'unknown'
-                };
+      // Promisify database queries
+      const gwamaGet = promisify(gwamaDb.all).bind(gwamaDb);
+      const mrmegaGet = promisify(mrmegaDb.all).bind(mrmegaDb);
+      const annotationGet = promisify(annotationDb.all).bind(annotationDb);
+
+      // Query snp_annotations for RSIDs
+      const annotationQuery = `
+        SELECT chromosome, position, rsID, gene_name, consequence
+        FROM snp_annotations
+        WHERE rsID LIKE ?
+        LIMIT 50
+      `;
+      const annotations = await annotationGet(annotationQuery, [`rs${term}%`]);
+
+      if (!annotations.length) {
+        gwamaDb.close();
+        mrmegaDb.close();
+        annotationDb.close();
+        return { results: [] };
+      }
+
+      // Extract chromosome and position pairs for querying phewas databases
+      const positions = annotations.map(a => ({
+        chromosome: a.chromosome,
+        position: a.position,
+      }));
+
+      // Query both databases for matching SNPs
+      const results = [];
+      for (const { chromosome, position } of positions) {
+        const query = `
+          SELECT SNP_ID, chromosome, position, ref_allele, alt_allele
+          FROM phewas_snp_data
+          WHERE chromosome = ? AND position = ?
+          LIMIT 1
+        `;
+
+        // Query both databases
+        const [gwamaResults, mrmegaResults] = await Promise.all([
+          gwamaGet(query, [chromosome, position]),
+          mrmegaGet(query, [chromosome, position]),
+        ]);
+
+        // Combine results, preferring gwama if both exist
+        const result = gwamaResults[0] || mrmegaResults[0];
+        if (result) {
+          const annotation = annotations.find(
+            a => a.chromosome === result.chromosome && a.position === result.position
+          );
+          if (annotation) {
+            results.push({
+              type: 'snp',
+              rsId: annotation.rsID,
+              internalId: result.SNP_ID,
+              chromosome: result.chromosome,
+              position: parseInt(result.position),
+              gene: annotation.gene_name || 'unknown',
+              consequence: annotation.consequence || 'unknown',
             });
-            // console.log(results)
-            return { results };
-
-        } catch (error) {
-            logger.error('Error searching SNPs:', error);
-            if (error.message.includes('No regions in query')) {
-                return { results: [] };
-            }
-            return { results: [] };
+          }
         }
+      }
+
+      // Close database connections
+      gwamaDb.close();
+      mrmegaDb.close();
+      annotationDb.close();
+
+      return { results: results.slice(0, 50) };
+    } catch (error) {
+      logger.error('Error searching SNPs:', error);
+      return { results: [] };
     }
+  }
 }
 
 export const snpMappingService = new SNPMappingService();
