@@ -13,7 +13,16 @@ class SNPMappingService {
   constructor() {
     this.db = null;
     this.stmt = null;
-    this.topSNPs = []; // Cache for top 100 rsIDs
+    // Initialize with placeholder rsIDs for instant response
+    this.topSNPs = Array.from({ length: 50 }, (_, i) => ({
+      type: 'snp',
+      rsId: `rs${i + 1}`,
+      internalId: 'placeholder',
+      chromosome: '1',
+      position: 0,
+      gene: 'unknown',
+      consequence: 'unknown'
+    }));
     this.searchCache = new Map(); // Cache for recent searches
     this.initialize();
   }
@@ -32,6 +41,7 @@ class SNPMappingService {
       this.stmt = await this.db.prepare('SELECT 1 FROM phewas_snp_data_mrmega WHERE SNP_ID = ? LIMIT 1');
 
       // Preload top SNPs in background
+      logger.info('Starting background preload of top rsIDs...');
       setImmediate(() => this.preloadTopSNPs());
     } catch (error) {
       logger.error('Error initializing SNPMappingService:', error);
@@ -47,8 +57,13 @@ class SNPMappingService {
         logger.warn('No SNP_IDs found in phewas_snp_data_mrmega');
         return;
       }
-      this.topSNPs = await this.getRsIdsForSnpIds(topSnpIds.map(row => row.SNP_ID));
-      logger.info(`Preloaded ${this.topSNPs.length} top rsIDs in background`);
+      const newTopSNPs = await this.getRsIdsForSnpIds(topSnpIds.map(row => row.SNP_ID));
+      if (newTopSNPs.length > 0) {
+        this.topSNPs = newTopSNPs; // Update with actual rsIDs
+        logger.info(`Preloaded ${this.topSNPs.length} top rsIDs in background`);
+      } else {
+        logger.warn('No valid rsIDs mapped during preload');
+      }
     } catch (error) {
       logger.error('Error preloading top rsIDs:', error);
     }
