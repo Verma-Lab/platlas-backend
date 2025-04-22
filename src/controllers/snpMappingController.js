@@ -1,3 +1,4 @@
+// API endpoint remains unchanged
 import { snpMappingService } from '../services/snpMappingService.js';
 import logger from '../utils/logger.js';
 
@@ -15,7 +16,7 @@ export const searchSNPs = async (req, res) => {
 
     res.json({
       results,
-      hasMore: results.length >= 50, // Indicate more results may exist
+      hasMore: results.length >= 50,
       count: results.length
     });
   } catch (error) {

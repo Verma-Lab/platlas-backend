@@ -12,85 +12,39 @@ const SNP_FILE_PATH = SNP_MAPPING; // /home/ac.guptahr/platlas-backend/DATABASE/
 class SNPMappingService {
   constructor() {
     this.db = null;
-    this.stmt = null;
-    // Initialize with placeholder rsIDs for instant response
-    this.topSNPs = Array.from({ length: 50 }, (_, i) => ({
-      type: 'snp',
-      rsId: `rs${i + 1}`,
-      internalId: 'placeholder',
-      chromosome: '1',
-      position: 0,
-      gene: 'unknown',
-      consequence: 'unknown'
-    }));
-    this.searchCache = new Map(); // Cache for recent searches
+    this.topSNPs = []; // Cache for top 50 rsIDs
+    this.snpMap = new Map(); // In-memory map of SNP_ID to rsID details
     this.initialize();
   }
 
-  // Initialize database without preloading
+  // Initialize database and preload mappings
   async initialize() {
     try {
       // Connect to MR-MEGA database
-      logger.info('Connecting to MR-MEGA database...');
       this.db = await open({
         filename: MRMEGA_DB,
         driver: sqlite3.Database,
         mode: sqlite3.OPEN_READONLY
       });
-      logger.info('Preparing statement for SNP_ID validation...');
-      this.stmt = await this.db.prepare('SELECT 1 FROM phewas_snp_data_mrmega WHERE SNP_ID = ? LIMIT 1');
 
-      // Preload top SNPs in background
-      logger.info('Starting background preload of top rsIDs...');
-      setImmediate(() => this.preloadTopSNPs());
-    } catch (error) {
-      logger.error('Error initializing SNPMappingService:', error);
-    }
-  }
+      // Fetch all SNP_IDs from MR-MEGA database
+      const snpRows = await this.db.all('SELECT DISTINCT SNP_ID FROM phewas_snp_data_mrmega');
+      const validSnpIds = new Set(snpRows.map(row => row.SNP_ID));
+      logger.info(`Fetched ${validSnpIds.size} SNP_IDs from MR-MEGA database`);
 
-  // Preload top SNPs in background
-  async preloadTopSNPs() {
-    try {
-      logger.info('Fetching top 100 SNP_IDs in background...');
-      const topSnpIds = await this.db.all('SELECT DISTINCT SNP_ID FROM phewas_snp_data_mrmega LIMIT 100');
-      if (topSnpIds.length === 0) {
-        logger.warn('No SNP_IDs found in phewas_snp_data_mrmega');
-        return;
-      }
-      const newTopSNPs = await this.getRsIdsForSnpIds(topSnpIds.map(row => row.SNP_ID));
-      if (newTopSNPs.length > 0) {
-        this.topSNPs = newTopSNPs; // Update with actual rsIDs
-        logger.info(`Preloaded ${this.topSNPs.length} top rsIDs in background`);
-      } else {
-        logger.warn('No valid rsIDs mapped during preload');
-      }
-    } catch (error) {
-      logger.error('Error preloading top rsIDs:', error);
-    }
-  }
-
-  // Map SNP_IDs to rsIDs using annotation file
-  async getRsIdsForSnpIds(snpIds) {
-    try {
-      const snpSet = new Set(snpIds);
-      const results = [];
+      // Load annotation file into memory
       const inputStream = fs.createReadStream(SNP_FILE_PATH).pipe(createGunzip());
       const rl = readline.createInterface({ input: inputStream, crlfDelay: Infinity });
-
-      logger.info('Mapping SNP_IDs to rsIDs...');
-      let rowCount = 0;
-      const maxRows = 1000000; // Limit to 1M rows for speed
 
       for await (const line of rl) {
         if (line.startsWith('#')) continue;
         const fields = line.split('\t');
         if (fields.length < 15) continue;
 
-        rowCount++;
         const snpId = fields[2]; // ID
         const rsId = fields[14]; // Existing_variation
-        if (snpSet.has(snpId) && rsId && rsId.startsWith('rs')) {
-          results.push({
+        if (validSnpIds.has(snpId) && rsId && rsId.startsWith('rs')) {
+          this.snpMap.set(snpId, {
             type: 'snp',
             rsId,
             internalId: snpId,
@@ -99,83 +53,43 @@ class SNPMappingService {
             gene: fields[5] || 'unknown',
             consequence: fields[8] || 'unknown'
           });
-          snpSet.delete(snpId);
-          if (snpSet.size === 0) break;
         }
-        if (rowCount >= maxRows) break;
       }
-
       rl.close();
-      logger.info(`Mapped ${results.length} rsIDs after scanning ${rowCount} rows`);
-      return results;
+      logger.info(`Loaded ${this.snpMap.size} SNP mappings into memory`);
+
+      // Preload top 50 rsIDs
+      const topSnpIds = Array.from(validSnpIds).slice(0, 100); // Take first 100 SNP_IDs
+      this.topSNPs = topSnpIds
+        .map(snpId => this.snpMap.get(snpId))
+        .filter(Boolean)
+        .slice(0, 50); // Limit to 50
+      logger.info(`Preloaded ${this.topSNPs.length} top rsIDs`);
     } catch (error) {
-      logger.error('Error mapping SNP_IDs to rsIDs:', error);
-      return [];
+      logger.error('Error initializing SNPMappingService:', error);
     }
   }
 
   // Search SNPs based on term
   async searchSNPs(searchTerm) {
     try {
-      logger.info(`Searching SNPs for term: ${searchTerm}`);
+      const searchLower = searchTerm.toLowerCase();
 
       // Handle default "rs" case
-      if (searchTerm.toLowerCase() === 'rs') {
-        logger.info(`Returning ${this.topSNPs.length} cached rsIDs for term "rs"`);
-        return { results: this.topSNPs.slice(0, 50) };
+      if (searchLower === 'rs') {
+        return { results: this.topSNPs };
       }
 
-      // Check cache
-      if (this.searchCache.has(searchTerm)) {
-        logger.info(`Cache hit for ${searchTerm}`);
-        return { results: this.searchCache.get(searchTerm) };
-      }
-
-      // Stream annotation file for rsID matches
-      const inputStream = fs.createReadStream(SNP_FILE_PATH).pipe(createGunzip());
-      const rl = readline.createInterface({ input: inputStream, crlfDelay: Infinity });
-
+      // Filter in-memory map for real-time search
       const results = [];
-      const searchLower = searchTerm.toLowerCase();
-      let rowCount = 0;
-      const maxRows = 1000000; // Limit to 1M rows for <1s
-
-      for await (const line of rl) {
-        if (line.startsWith('#')) continue;
-        const fields = line.split('\t');
-        if (fields.length < 15) continue;
-
-        rowCount++;
-        const rsId = fields[14]; // Existing_variation
-        const snpId = fields[2]; // ID
-        if (rsId && rsId.toLowerCase().startsWith(searchLower)) {
-          // Validate SNP_ID against MR-MEGA database
-          const exists = await this.stmt.get(snpId);
-          if (exists) {
-            results.push({
-              type: 'snp',
-              rsId,
-              internalId: snpId,
-              chromosome: fields[0],
-              position: parseInt(fields[1]) || 0,
-              gene: fields[5] || 'unknown',
-              consequence: fields[8] || 'unknown'
-            });
-          }
+      for (const entry of this.snpMap.values()) {
+        if (entry.rsId.toLowerCase().startsWith(searchLower)) {
+          results.push(entry);
+          if (results.length >= 50) break; // Limit to 50 results
         }
-
-        if (results.length >= 50 || rowCount >= maxRows) break;
       }
 
-      rl.close();
-      logger.info(`Found ${results.length} SNPs for term ${searchTerm} after scanning ${rowCount} rows`);
-
-      // Cache results
-      this.searchCache.set(searchTerm, results);
-      if (this.searchCache.size > 1000) {
-        this.searchCache.delete(this.searchCache.keys().next().value);
-      }
-
+      logger.info(`Found ${results.length} SNPs for term ${searchTerm}`);
       return { results };
     } catch (error) {
       logger.error(`Error searching SNPs for ${searchTerm}:`, error);
@@ -185,14 +99,9 @@ class SNPMappingService {
 
   // Cleanup on server shutdown
   async cleanup() {
-    try {
-      if (this.stmt) await this.stmt.finalize();
-      if (this.db) await this.db.close();
-      logger.info('SNPMappingService cleanup complete');
-    } catch (error) {
-      logger.error('Error during SNPMappingService cleanup:', error);
-    }
+    if (this.db) await this.db.close();
   }
 }
 
 export const snpMappingService = new SNPMappingService();
+
