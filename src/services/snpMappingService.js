@@ -1,4 +1,3 @@
-// src/services/snpMappingService.js
 import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -15,32 +14,65 @@ class SNPMappingService {
       logger.info(`Searching SNPs with term: ${searchTerm}`);
 
       // Connect to GWAMA and MR-MEGA databases
-      const gwamaDb = new sqlite3.Database(GWAMA_DB, (err) => {
+      const gwamaDb = new sqlite3.Database(GWAMA_DB, sqlite3.OPEN_READONLY, (err) => {
         if (err) logger.error(`GWAMA DB connection error: ${err.message}`);
       });
-      const mrmegaDb = new sqlite3.Database(MRMEGA_DB, (err) => {
+      const mrmegaDb = new sqlite3.Database(MRMEGA_DB, sqlite3.OPEN_READONLY, (err) => {
         if (err) logger.error(`MR-MEGA DB connection error: ${err.message}`);
       });
 
       // Promisify SQLite queries
-      const gwamaQuery = promisify(gwamaDb.all.bind(gwamaDb));
-      const mrmegaQuery = promisify(mrmegaDb.all.bind(mrmegaDb));
+      const gwamaGet = promisify(gwamaDb.all.bind(gwamaDb));
+      const mrmegaGet = promisify(mrmegaDb.all.bind(mrmegaDb));
 
-      // Query GWAMA database for SNPs
-      const gwamaSnps = await gwamaQuery(`
-        SELECT DISTINCT SNP_ID, chromosome, position
-        FROM phewas_snp_data
-        LIMIT 100
-      `);
-      logger.info(`GWAMA SNPs found: ${gwamaSnps.length}`, gwamaSnps.slice(0, 5));
+      // Check if table exists
+      const checkTable = async (db, tableName, dbName) => {
+        try {
+          const tables = await promisify(db.all.bind(db))(
+            `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`
+          );
+          return tables.length > 0;
+        } catch (error) {
+          logger.error(`Error checking table ${tableName} in ${dbName}: ${error.message}`);
+          return false;
+        }
+      };
 
-      // Query MR-MEGA database for SNPs
-      const mrmegaSnps = await mrmegaQuery(`
-        SELECT DISTINCT SNP_ID, chromosome, position
-        FROM phewas_snp_data
-        LIMIT 100
-      `);
-      logger.info(`MR-MEGA SNPs found: ${mrmegaSnps.length}`, mrmegaSnps.slice(0, 5));
+      // Query GWAMA database
+      let gwamaSnps = [];
+      const gwamaTable = 'phewas_snp_data';
+      if (await checkTable(gwamaDb, gwamaTable, 'GWAMA')) {
+        try {
+          gwamaSnps = await gwamaGet(`
+            SELECT DISTINCT SNP_ID, chromosome, position
+            FROM ${gwamaTable}
+            LIMIT 100
+          `);
+          logger.info(`GWAMA SNPs found: ${gwamaSnps.length}`, gwamaSnps.slice(0, 5));
+        } catch (error) {
+          logger.error(`GWAMA query error: ${error.message}`);
+        }
+      } else {
+        logger.warn(`Table ${gwamaTable} not found in GWAMA database`);
+      }
+
+      // Query MR-MEGA database
+      let mrmegaSnps = [];
+      const mrmegaTable = 'phewas_snp_data_mrmega';
+      if (await checkTable(mrmegaDb, mrmegaTable, 'MR-MEGA')) {
+        try {
+          mrmegaSnps = await mrmegaGet(`
+            SELECT DISTINCT SNP_ID, chromosome, position
+            FROM ${mrmegaTable}
+            LIMIT 100
+          `);
+          logger.info(`MR-MEGA SNPs found: ${mrmegaSnps.length}`, mrmegaSnps.slice(0, 5));
+        } catch (error) {
+          logger.error(`MR-MEGA query error: ${error.message}`);
+        }
+      } else {
+        logger.warn(`Table ${mrmegaTable} not found in MR-MEGA database`);
+      }
 
       // Combine unique SNPs
       const allSnps = [...new Set([...gwamaSnps, ...mrmegaSnps].map(s => JSON.stringify(s)))].map(s => JSON.parse(s));
@@ -64,8 +96,7 @@ class SNPMappingService {
             if (annotation) {
               const fields = annotation.split('\t');
               const rsId = fields[14] || SNP_ID; // Existing_variation column
-              // Filter by search term
-              if (rsId.startsWith(searchTerm.toLowerCase())) {
+              if (rsId.toLowerCase().startsWith(searchTerm.toLowerCase())) {
                 return {
                   type: 'snp',
                   rsId,
