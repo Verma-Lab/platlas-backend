@@ -5,50 +5,39 @@ import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 
 // Database and file paths (from constants.js)
-const GWAMA_DB = '/nfs/platlas_stor/db/genomics-backend/phewas_gwama.db';
 const MRMEGA_DB = '/nfs/platlas_stor/db/genomics-backend/phewas_mrmega.db';
 const SNP_ANNOTATION = '/home/ac.guptahr/platlas-backend/DATABASE/gwPheWAS_All.annotation.txt.gz';
 const OUTPUT_ANNOTATION = '/home/ac.guptahr/platlas-backend/DATABASE/filtered_SNP_annotation.txt';
 
-// Table names
-const GWAMA_TABLE = 'phewas_snp_data';
+// Table name
 const MRMEGA_TABLE = 'phewas_snp_data_mrmega';
 
-// Function to initialize database connections and prepared statements
+// Function to initialize database connection and prepared statement
 async function initializeDB() {
-  const gwamaDB = await open({
-    filename: GWAMA_DB,
-    driver: sqlite3.Database,
-    mode: sqlite3.OPEN_READONLY
-  });
   const mrmegaDB = await open({
     filename: MRMEGA_DB,
     driver: sqlite3.Database,
     mode: sqlite3.OPEN_READONLY
   });
 
-  // Prepare statements for querying SNP_ID
-  // Query: SELECT 1 FROM phewas_snp_data WHERE SNP_ID = ? LIMIT 1
-  const gwamaStmt = await gwamaDB.prepare(`SELECT 1 FROM ${GWAMA_TABLE} WHERE SNP_ID = ? LIMIT 1`);
+  // Prepare statement for querying SNP_ID
   // Query: SELECT 1 FROM phewas_snp_data_mrmega WHERE SNP_ID = ? LIMIT 1
   const mrmegaStmt = await mrmegaDB.prepare(`SELECT 1 FROM ${MRMEGA_TABLE} WHERE SNP_ID = ? LIMIT 1`);
 
-  return { gwamaDB, mrmegaDB, gwamaStmt, mrmegaStmt };
+  return { mrmegaDB, mrmegaStmt };
 }
 
-// Function to close database connections and statements
-async function closeDB({ gwamaDB, mrmegaDB, gwamaStmt, mrmegaStmt }) {
-  await gwamaStmt.finalize();
+// Function to close database connection and statement
+async function closeDB({ mrmegaDB, mrmegaStmt }) {
   await mrmegaStmt.finalize();
-  await gwamaDB.close();
   await mrmegaDB.close();
 }
 
 // Main function to create filtered annotation file
 async function createFilteredAnnotation() {
   try {
-    // Step 1: Initialize databases
-    console.log('Initializing database connections...');
+    // Step 1: Initialize database
+    console.log('Initializing database connection to MR-MEGA...');
     const db = await initializeDB();
 
     // Step 2: Stream and filter annotation file
@@ -94,25 +83,14 @@ async function createFilteredAnnotation() {
       }
       seenIds.add(snpId);
 
-      // Query databases for this ID
-      // Executes: SELECT 1 FROM phewas_snp_data WHERE SNP_ID = snpId LIMIT 1
-      const gwamaExists = await db.gwamaStmt.get(snpId);
+      // Query MR-MEGA database
       // Executes: SELECT 1 FROM phewas_snp_data_mrmega WHERE SNP_ID = snpId LIMIT 1
       const mrmegaExists = await db.mrmegaStmt.get(snpId);
 
-      let sourceDB = '';
-      if (gwamaExists && mrmegaExists) {
-        sourceDB = 'GWAMA,MR-MEGA';
-      } else if (gwamaExists) {
-        sourceDB = 'GWAMA';
-      } else if (mrmegaExists) {
-        sourceDB = 'MR-MEGA';
-      }
-
-      if (sourceDB) {
-        outputStream.write(`${line}\t${sourceDB}\n`);
+      if (mrmegaExists) {
+        outputStream.write(`${line}\tMR-MEGA\n`);
         filteredCount++;
-        console.log(`Processed row ${processedCount}: ID=${snpId}, Included=true, SourceDB=${sourceDB}`);
+        console.log(`Processed row ${processedCount}: ID=${snpId}, Included=true, SourceDB=MR-MEGA`);
       } else if (processedCount % 100 === 0) {
         console.log(`Processed row ${processedCount}: ID=${snpId}, Included=false`);
       }
@@ -126,7 +104,7 @@ async function createFilteredAnnotation() {
     console.log('Done.');
   } catch (error) {
     console.error('Error creating filtered annotation:', error);
-    // Ensure databases are closed on error
+    // Ensure database is closed on error
     await closeDB(db);
   }
 }
