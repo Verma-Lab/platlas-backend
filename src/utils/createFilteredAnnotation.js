@@ -1,10 +1,10 @@
-const sqlite3 = require('sqlite3').verbose();
-const fs = require('fs');
-const zlib = require('zlib');
-const readline = require('readline');
-const path = require('path');
+import fs from 'fs';
+import readline from 'readline';
+import { createGunzip } from 'zlib';
+import sqlite3 from 'sqlite3';
+import { open } from 'sqlite';
 
-// Database paths from constants.js
+// Database paths
 const GWAMA_DB = '/nfs/platlas_stor/db/genomics-backend/phewas_gwama.db';
 const MRMEGA_DB = '/nfs/platlas_stor/db/genomics-backend/phewas_mrmega.db';
 const SNP_ANNOTATION = '/home/ac.guptahr/platlas-backend/DATABASE/gwPheWAS_All.annotation.txt.gz';
@@ -12,30 +12,19 @@ const OUTPUT_ANNOTATION = '/home/ac.guptahr/platlas-backend/DATABASE/filtered_SN
 
 // Function to get SNP_IDs and their source database
 async function getSNPsFromDB(dbPath, tableName, sourceName) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
-      if (err) {
-        console.error(`Error connecting to ${dbPath}:`, err);
-        return reject(err);
-      }
-    });
-
-    const snpMap = new Map();
-    db.all(`SELECT DISTINCT SNP_ID FROM ${tableName}`, [], (err, rows) => {
-      if (err) {
-        console.error(`Error querying ${tableName} in ${dbPath}:`, err);
-        db.close();
-        return reject(err);
-      }
-
-      rows.forEach(row => {
-        snpMap.set(row.SNP_ID, sourceName);
-      });
-      console.log(`Found ${snpMap.size} unique SNPs in ${tableName} (${dbPath})`);
-      db.close();
-      resolve(snpMap);
-    });
+  const db = await open({
+    filename: dbPath,
+    driver: sqlite3.Database,
+    mode: sqlite3.OPEN_READONLY
   });
+
+  const snpMap = new Map();
+  const rows = await db.all(`SELECT DISTINCT SNP_ID FROM ${tableName}`);
+  rows.forEach(row => snpMap.set(row.SNP_ID, sourceName));
+  console.log(`Found ${snpMap.size} unique SNPs in ${tableName} (${dbPath})`);
+
+  await db.close();
+  return snpMap;
 }
 
 // Function to combine SNP sources
@@ -69,7 +58,7 @@ async function createFilteredAnnotation() {
 
     // Step 3: Read and filter the annotation file
     console.log('Reading and filtering annotation file...');
-    const inputStream = fs.createReadStream(SNP_ANNOTATION).pipe(zlib.createGunzip());
+    const inputStream = fs.createReadStream(SNP_ANNOTATION).pipe(createGunzip());
     const outputStream = fs.createWriteStream(OUTPUT_ANNOTATION);
     
     const rl = readline.createInterface({
