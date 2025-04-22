@@ -1,131 +1,143 @@
+import fs from 'fs';
+import readline from 'readline';
+import { createGunzip } from 'zlib';
 import sqlite3 from 'sqlite3';
-import { promisify } from 'util';
-import { exec } from 'child_process';
+import { open } from 'sqlite';
 import logger from '../utils/logger.js';
-import { SNP_MAPPING, GWAMA_DB, MRMEGA_DB } from '../config/constants.js';
+import { SNP_MAPPING } from '../config/constants.js';
 
-const execAsync = promisify(exec);
-const SNP_FILE_PATH = SNP_MAPPING;
+const MRMEGA_DB = '/nfs/platlas_stor/db/genomics-backend/phewas_mrmega.db';
+const SNP_FILE_PATH = SNP_MAPPING; // /home/ac.guptahr/platlas-backend/DATABASE/gwPheWAS_All.annotation.txt.gz
 
 class SNPMappingService {
+  constructor() {
+    this.db = null;
+    this.stmt = null;
+    this.topSNPs = []; // Cache for top 100 rsIDs
+    this.searchCache = new Map(); // Cache for recent searches
+    this.initialize();
+  }
+
+  // Initialize database and preload top SNPs
+  async initialize() {
+    try {
+      // Connect to MR-MEGA database
+      this.db = await open({
+        filename: MRMEGA_DB,
+        driver: sqlite3.Database,
+        mode: sqlite3.OPEN_READONLY
+      });
+      this.stmt = await this.db.prepare('SELECT 1 FROM phewas_snp_data_mrmega WHERE SNP_ID = ? LIMIT 1');
+
+      // Preload top 100 SNP_IDs
+      const topSnpIds = await this.db.all('SELECT DISTINCT SNP_ID FROM phewas_snp_data_mrmega LIMIT 100');
+      this.topSNPs = await this.getRsIdsForSnpIds(topSnpIds.map(row => row.SNP_ID));
+      logger.info(`Preloaded ${this.topSNPs.length} top rsIDs`);
+    } catch (error) {
+      logger.error('Error initializing SNPMappingService:', error);
+    }
+  }
+
+  // Map SNP_IDs to rsIDs using annotation file
+  async getRsIdsForSnpIds(snpIds) {
+    const snpSet = new Set(snpIds);
+    const results = [];
+    const inputStream = fs.createReadStream(SNP_FILE_PATH).pipe(createGunzip());
+    const rl = readline.createInterface({ input: inputStream, crlfDelay: Infinity });
+
+    for await (const line of rl) {
+      if (line.startsWith('#')) continue;
+      const fields = line.split('\t');
+      if (fields.length < 15) continue;
+
+      const snpId = fields[2]; // ID
+      const rsId = fields[14]; // Existing_variation
+      if (snpSet.has(snpId) && rsId && rsId.startsWith('rs')) {
+        results.push({
+          type: 'snp',
+          rsId,
+          internalId: snpId,
+          chromosome: fields[0],
+          position: parseInt(fields[1]) || 0,
+          gene: fields[5] || 'unknown',
+          consequence: fields[8] || 'unknown'
+        });
+        snpSet.delete(snpId); // Remove to avoid duplicates
+        if (snpSet.size === 0) break;
+      }
+    }
+
+    rl.close();
+    return results;
+  }
+
+  // Search SNPs based on term
   async searchSNPs(searchTerm) {
     try {
-      let results = [];
-      logger.info(`Searching SNPs with term: ${searchTerm}`);
-
-      // Connect to GWAMA and MR-MEGA databases
-      const gwamaDb = new sqlite3.Database(GWAMA_DB, sqlite3.OPEN_READONLY, (err) => {
-        if (err) logger.error(`GWAMA DB connection error: ${err.message}`);
-      });
-      const mrmegaDb = new sqlite3.Database(MRMEGA_DB, sqlite3.OPEN_READONLY, (err) => {
-        if (err) logger.error(`MR-MEGA DB connection error: ${err.message}`);
-      });
-
-      // Promisify SQLite queries
-      const gwamaGet = promisify(gwamaDb.all.bind(gwamaDb));
-      const mrmegaGet = promisify(mrmegaDb.all.bind(mrmegaDb));
-
-      // Check if table exists
-      const checkTable = async (db, tableName, dbName) => {
-        try {
-          const tables = await promisify(db.all.bind(db))(
-            `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`
-          );
-          return tables.length > 0;
-        } catch (error) {
-          logger.error(`Error checking table ${tableName} in ${dbName}: ${error.message}`);
-          return false;
-        }
-      };
-
-      // Query GWAMA database
-      let gwamaSnps = [];
-      const gwamaTable = 'phewas_snp_data';
-      if (await checkTable(gwamaDb, gwamaTable, 'GWAMA')) {
-        try {
-          gwamaSnps = await gwamaGet(`
-            SELECT DISTINCT SNP_ID, chromosome, position
-            FROM ${gwamaTable}
-            LIMIT 100
-          `);
-          logger.info(`GWAMA SNPs found: ${gwamaSnps.length}`, gwamaSnps.slice(0, 5));
-        } catch (error) {
-          logger.error(`GWAMA query error: ${error.message}`);
-        }
-      } else {
-        logger.warn(`Table ${gwamaTable} not found in GWAMA database`);
+      // Handle default "rs" case
+      if (searchTerm.toLowerCase() === 'rs') {
+        return { results: this.topSNPs.slice(0, 50) };
       }
 
-      // Query MR-MEGA database
-      let mrmegaSnps = [];
-      const mrmegaTable = 'phewas_snp_data_mrmega';
-      if (await checkTable(mrmegaDb, mrmegaTable, 'MR-MEGA')) {
-        try {
-          mrmegaSnps = await mrmegaGet(`
-            SELECT DISTINCT SNP_ID, chromosome, position
-            FROM ${mrmegaTable}
-            LIMIT 100
-          `);
-          logger.info(`MR-MEGA SNPs found: ${mrmegaSnps.length}`, mrmegaSnps.slice(0, 5));
-        } catch (error) {
-          logger.error(`MR-MEGA query error: ${error.message}`);
-        }
-      } else {
-        logger.warn(`Table ${mrmegaTable} not found in MR-MEGA database`);
+      // Check cache
+      if (this.searchCache.has(searchTerm)) {
+        logger.info(`Cache hit for ${searchTerm}`);
+        return { results: this.searchCache.get(searchTerm) };
       }
 
-      // Combine unique SNPs
-      const allSnps = [...new Set([...gwamaSnps, ...mrmegaSnps].map(s => JSON.stringify(s)))].map(s => JSON.parse(s));
-      logger.info(`Total unique SNPs: ${allSnps.length}`);
+      // Stream annotation file for rsID matches
+      const inputStream = fs.createReadStream(SNP_FILE_PATH).pipe(createGunzip());
+      const rl = readline.createInterface({ input: inputStream, crlfDelay: Infinity });
 
-      // Fetch rsIDs from annotation file
-      const snpData = await Promise.all(
-        allSnps.map(async (snp) => {
-          const { chromosome, position, SNP_ID } = snp;
-          try {
-            const command = `tabix ${SNP_FILE_PATH} ${chromosome}:${position}-${position}`;
-            const { stdout } = await execAsync(command);
-            const lines = stdout.split('\n').filter(Boolean);
-            logger.debug(`Tabix output for SNP ${SNP_ID}: ${lines.length} lines`);
+      const results = [];
+      const searchLower = searchTerm.toLowerCase();
 
-            const annotation = lines.find((line) => {
-              const fields = line.split('\t');
-              return fields[2] === SNP_ID; // Match SNP_ID with ID column
+      for await (const line of rl) {
+        if (line.startsWith('#')) continue;
+        const fields = line.split('\t');
+        if (fields.length < 15) continue;
+
+        const rsId = fields[14]; // Existing_variation
+        const snpId = fields[2]; // ID
+        if (rsId && rsId.toLowerCase().startsWith(searchLower)) {
+          // Validate SNP_ID against MR-MEGA database
+          const exists = await this.stmt.get(snpId);
+          if (exists) {
+            results.push({
+              type: 'snp',
+              rsId,
+              internalId: snpId,
+              chromosome: fields[0],
+              position: parseInt(fields[1]) || 0,
+              gene: fields[5] || 'unknown',
+              consequence: fields[8] || 'unknown'
             });
-
-            if (annotation) {
-              const fields = annotation.split('\t');
-              const rsId = fields[14] || SNP_ID; // Existing_variation column
-              if (rsId.toLowerCase().startsWith(searchTerm.toLowerCase())) {
-                return {
-                  type: 'snp',
-                  rsId,
-                  internalId: SNP_ID,
-                  chromosome,
-                  position: parseInt(position),
-                  gene: fields[5] || 'unknown',
-                  consequence: fields[8] || 'unknown',
-                };
-              }
-            }
-            return null;
-          } catch (error) {
-            logger.error(`Error fetching annotation for SNP ${SNP_ID}: ${error.message}`);
-            return null;
           }
-        })
-      );
+        }
 
-      results = snpData.filter(Boolean).slice(0, 50);
-      logger.info(`Final SNP results: ${results.length}`, results);
+        if (results.length >= 50) break; // Limit to 50 results
+      }
 
-      gwamaDb.close();
-      mrmegaDb.close();
+      rl.close();
+
+      // Cache results
+      this.searchCache.set(searchTerm, results);
+      if (this.searchCache.size > 1000) {
+        this.searchCache.delete(this.searchCache.keys().next().value); // Limit cache size
+      }
+
+      logger.info(`Found ${results.length} SNPs for term ${searchTerm}`);
       return { results };
     } catch (error) {
-      logger.error(`Error searching SNPs: ${error.message}`);
+      logger.error(`Error searching SNPs for ${searchTerm}:`, error);
       return { results: [] };
     }
+  }
+
+  // Cleanup on server shutdown
+  async cleanup() {
+    if (this.stmt) await this.stmt.finalize();
+    if (this.db) await this.db.close();
   }
 }
 

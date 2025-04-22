@@ -1,4 +1,3 @@
-// src/controllers/snpMappingController.js
 import { snpMappingService } from '../services/snpMappingService.js';
 import logger from '../utils/logger.js';
 
@@ -7,7 +6,7 @@ export const searchSNPs = async (req, res) => {
 
   if (!term) {
     return res.status(400).json({
-      error: 'Search term is required',
+      error: 'Search term is required'
     });
   }
 
@@ -16,14 +15,14 @@ export const searchSNPs = async (req, res) => {
 
     res.json({
       results,
-      hasMore: results.length >= 50,
-      count: results.length,
+      hasMore: results.length >= 50, // Indicate more results may exist
+      count: results.length
     });
   } catch (error) {
     logger.error('Error in searchSNPs:', error);
     res.status(500).json({
       error: 'Failed to search SNPs',
-      details: error.message,
+      details: error.message
     });
   }
 };
