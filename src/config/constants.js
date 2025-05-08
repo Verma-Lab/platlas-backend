@@ -25,7 +25,8 @@ import path from 'path';
 export const BASE_PREFIX = "MVP_R4.1000G_";
 export const TOP_HITS_PATH = "/Users/hritvik/Downloads/tabix_file/top_hits/";
 export const GWAS_FILES_PATH = "/nfs/platlas_stor/tabix/";
-export const MANIFEST_PATH = "/home/ac.guptahr/platlas-backend/DATABASE/metadata_platlas.csv";
+// export const MANIFEST_PATH = "/home/ac.guptahr/platlas-backend/DATABASE/metadata_platlas.csv";
+export const MANIFEST_PATH = "/home/ac.guptahr/platlas-backend/DATABASE/combined_analysis.csv";
 export const ARGONNE_ACCESS_TOKEN = 'Ag2j86JY3Gg6reYe9lE87zlKpOM00XJWDDgxYKMVk7zoE6OpN7CkCoM0vB7V6regrWyyEv5xjX3EglfwDV5N6CQMmJE'
 
 // export const SQLITE_DB_PATH = "/Users/hritvik/genomics-backend/phewas_database.db";``
