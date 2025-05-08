@@ -271,8 +271,14 @@ export async function loadPhenotypeMapping() {
                 const populations = fields[3].replace(/"/g, '').split(',').map(pop => pop.trim());
                 const nAll = parseNumberWithCommas(fields[6]);
                 const nCases = parseNumberWithCommas(fields[7]);
-                const nSnp = parseNumberWithCommas(fields[11]);
-
+                const nSnp = parseNumberWithCommas(fields[20]);
+                console.log('LOADED PHENOTYPING',      traitDescription,
+                    category,
+                    populations,
+                    traitType,
+                    nAll,
+                    nCases,
+                    nSnp)
                 if (phenotype) {
                     mapping[phenotype] = {
                         traitDescription,
